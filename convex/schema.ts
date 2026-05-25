@@ -35,6 +35,20 @@ export default defineSchema({
     storageId: v.id("_storage"),
     filename: v.string(),
     contentType: v.string(),
+    documentType: v.optional(
+      v.union(
+        v.literal("pdf"),
+        v.literal("docx"),
+        v.literal("txt"),
+        v.literal("md"),
+      ),
+    ),
+    fileSize: v.optional(v.number()),
+    parserVersion: v.optional(v.string()),
+    embeddingModel: v.optional(v.string()),
+    embeddingDimensions: v.optional(v.number()),
+    chunkCount: v.optional(v.number()),
+    processedAt: v.optional(v.number()),
     status: v.union(
       v.literal("uploading"),
       v.literal("processing"),
@@ -54,8 +68,18 @@ export default defineSchema({
     content: v.string(),
     embedding: v.array(v.number()),
     tokenCount: v.number(),
+    chunkIndex: v.optional(v.number()),
+    sourceStart: v.optional(v.number()),
+    sourceEnd: v.optional(v.number()),
+    parserVersion: v.optional(v.string()),
+    embeddingModel: v.optional(v.string()),
+    embeddingDimensions: v.optional(v.number()),
+    headingPath: v.optional(v.array(v.string())),
+    pageStart: v.optional(v.number()),
+    pageEnd: v.optional(v.number()),
   })
     .index("by_documentId", ["documentId"])
+    .index("by_documentId_and_chunkIndex", ["documentId", "chunkIndex"])
     .index("by_knowledgeBaseId", ["knowledgeBaseId"])
     .index("by_knowledgeBaseId_and_moduleId", ["knowledgeBaseId", "moduleId"])
     .index("by_moduleId", ["moduleId"]),

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { v } from "convex/values"
 import { action, mutation, query } from "./_generated/server"
 import { internal } from "./_generated/api"
@@ -16,10 +18,13 @@ type ChatSource = {
 type RankedChunk = {
   chunk: any
   score: number
+  vectorScore: number
+  lexicalScore: number
   scopePriority: number
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0
   let dot = 0
   let normA = 0
   let normB = 0
@@ -28,12 +33,16 @@ function cosineSimilarity(a: number[], b: number[]): number {
     normA += a[i] * a[i]
     normB += b[i] * b[i]
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB)
+  if (denominator === 0) return 0
+  return dot / denominator
 }
 
 const SIMILARITY_THRESHOLD = 0.5
 const MAX_CONTEXT_CHUNKS = 5
 const MOCK_EMBEDDING_DIMENSIONS = 64
+const MOCK_EMBEDDING_MODEL = "mock-hash-64"
+const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 
 function buildSystemPrompt(kbTitle: string): string {
   return `You are an AI tutor for the course "${kbTitle}". Your role is to help students understand the course material.
@@ -357,6 +366,9 @@ export const sendMessage = action({
     let useMockAi = !apiKey || process.env.MOCK_AI !== "false"
 
     let queryEmbedding: number[]
+    let queryEmbeddingModel = useMockAi
+      ? MOCK_EMBEDDING_MODEL
+      : OPENAI_EMBEDDING_MODEL
     if (useMockAi) {
       queryEmbedding = generateMockEmbedding(args.content)
     } else {
@@ -376,6 +388,7 @@ export const sendMessage = action({
         const err = await embedRes.text()
         console.warn(`OpenAI embedding failed, using mock chat: ${err}`)
         useMockAi = true
+        queryEmbeddingModel = MOCK_EMBEDDING_MODEL
         queryEmbedding = generateMockEmbedding(args.content)
       } else {
         const embedData = await embedRes.json()
@@ -388,18 +401,31 @@ export const sendMessage = action({
       pinnedModuleId: conversation.pinnedModuleId,
     })
 
-    const scored: RankedChunk[] = allKbChunks.map((chunk: any) => ({
-      chunk,
-      score: useMockAi
-        ? lexicalScore(args.content, chunk.content)
-        : cosineSimilarity(queryEmbedding, chunk.embedding),
-      scopePriority: getScopePriority(chunk, conversation.pinnedModuleId),
-    }))
+    const compatibleChunks = allKbChunks.filter(
+      (chunk: any) =>
+        chunk.embeddingModel === queryEmbeddingModel &&
+        chunk.embeddingDimensions === queryEmbedding.length,
+    )
+
+    const scored: RankedChunk[] = compatibleChunks.map((chunk: any) => {
+      const vectorScore = cosineSimilarity(queryEmbedding, chunk.embedding)
+      const textScore = lexicalScore(args.content, chunk.content)
+      return {
+        chunk,
+        score: useMockAi ? textScore : 0.8 * vectorScore + 0.2 * textScore,
+        vectorScore,
+        lexicalScore: textScore,
+        scopePriority: getScopePriority(chunk, conversation.pinnedModuleId),
+      }
+    })
 
     const relevant = pickRelevant(scored, useMockAi)
 
     if (relevant.length === 0) {
-      const refusal: string = `I can only answer questions about "${kb.title}". Please ask a question related to this course material.`
+      const refusal: string =
+        allKbChunks.length > 0 && compatibleChunks.length === 0
+          ? `I can't access compatible course material for "${kb.title}" yet. Please ask again after the documents are reprocessed.`
+          : `I can only answer questions about "${kb.title}". Please ask a question related to this course material.`
 
       await ctx.runMutation(internal.chatInternal.insertMessage, {
         conversationId: args.conversationId,

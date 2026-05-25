@@ -14,6 +14,7 @@ import type * as chatInternal from "../chatInternal.js";
 import type * as debug from "../debug.js";
 import type * as documents from "../documents.js";
 import type * as knowledgeBases from "../knowledgeBases.js";
+import type * as lib_documentTypes from "../lib/documentTypes.js";
 import type * as modules from "../modules.js";
 import type * as processDocument from "../processDocument.js";
 import type * as processDocumentAction from "../processDocumentAction.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   debug: typeof debug;
   documents: typeof documents;
   knowledgeBases: typeof knowledgeBases;
+  "lib/documentTypes": typeof lib_documentTypes;
   modules: typeof modules;
   processDocument: typeof processDocument;
   processDocumentAction: typeof processDocumentAction;

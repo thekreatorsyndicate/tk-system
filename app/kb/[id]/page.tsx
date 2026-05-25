@@ -8,18 +8,28 @@ import { useAuth } from "@clerk/nextjs"
 import { useStableQuery } from "@/hooks/use-stable-query"
 import { use, useState, useRef, useEffect } from "react"
 
-export default function KBChatPage({ params }: { params: Promise<{ id: string }> }) {
+export default function KBChatPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
   const { id } = use(params)
   const { isLoaded, isSignedIn } = useAuth()
   const kb = useStableQuery(api.knowledgeBases.get, { id: id as any })
-  const moduleTree = useStableQuery(api.modules.getTree, { knowledgeBaseId: id as any })
-  const conversations = useStableQuery(api.chat.listConversations, { knowledgeBaseId: id as any })
+  const moduleTree = useStableQuery(api.modules.getTree, {
+    knowledgeBaseId: id as any,
+  })
+  const conversations = useStableQuery(api.chat.listConversations, {
+    knowledgeBaseId: id as any,
+  })
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [pinnedModuleId, setPinnedModuleId] = useState<string | null>(null)
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
-  const [showSidebar, setShowSidebar] = useState(true)
   const [showArchived, setShowArchived] = useState(false)
+  const [collapsedModuleIds, setCollapsedModuleIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const createConv = useMutation(api.chat.createConversation)
@@ -28,7 +38,7 @@ export default function KBChatPage({ params }: { params: Promise<{ id: string }>
   const sendMsg = useAction(api.chat.sendMessage)
   const messages = useStableQuery(
     api.chat.getMessages,
-    conversationId ? { conversationId: conversationId as any } : "skip",
+    conversationId ? { conversationId: conversationId as any } : "skip"
   )
 
   useEffect(() => {
@@ -42,7 +52,9 @@ export default function KBChatPage({ params }: { params: Promise<{ id: string }>
   if (!isSignedIn) {
     return (
       <div className="flex min-h-svh items-center justify-center p-8">
-        <p className="text-sm text-muted-foreground">Sign in to start learning</p>
+        <p className="text-sm text-muted-foreground">
+          Sign in to start learning
+        </p>
       </div>
     )
   }
@@ -92,139 +104,176 @@ export default function KBChatPage({ params }: { params: Promise<{ id: string }>
     setConversationId(id)
   }
 
-  const currentConv = safeConversations.find((c: any) => c._id === conversationId)
+  const currentConv = safeConversations.find(
+    (c: any) => c._id === conversationId
+  )
   const flatModules = flattenModuleTree(moduleTree)
-  const activeConversations = safeConversations.filter((conv: any) => conv.isActive)
-  const archivedConversations = safeConversations.filter((conv: any) => !conv.isActive)
+  const selectedModuleIds = pinnedModuleId
+    ? new Set([
+        pinnedModuleId,
+        ...getDescendantModuleIds(moduleTree, pinnedModuleId),
+      ])
+    : null
+  const scopedConversations = selectedModuleIds
+    ? safeConversations.filter(
+        (conv: any) =>
+          conv.pinnedModuleId && selectedModuleIds.has(conv.pinnedModuleId)
+      )
+    : safeConversations
+  const activeConversations = scopedConversations.filter(
+    (conv: any) => conv.isActive
+  )
+  const archivedConversations = scopedConversations.filter(
+    (conv: any) => !conv.isActive
+  )
 
   const pinnedModuleName = pinnedModuleId
-    ? flatModules.find((m: any) => m._id === pinnedModuleId)?.name ??
-      "Unknown module"
+    ? (flatModules.find((m: any) => m._id === pinnedModuleId)?.name ??
+      "Unknown module")
     : null
+
+  function toggleModuleExpanded(moduleId: string) {
+    setCollapsedModuleIds((current) => {
+      const next = new Set(current)
+      if (next.has(moduleId)) {
+        next.delete(moduleId)
+      } else {
+        next.add(moduleId)
+      }
+      return next
+    })
+  }
 
   return (
     <div className="flex h-[calc(100svh-4rem)]">
-      {showSidebar && (
-        <aside className="flex w-56 flex-col border-r">
-          <div className="flex items-center justify-between border-b px-3 py-2">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Conversations
-            </h2>
-            <button
-              onClick={handleNewConversation}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              + New
-            </button>
-          </div>
-          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
-            {safeConversations.length === 0 ? (
-              <p className="px-2 text-xs text-muted-foreground">No conversations yet</p>
-            ) : (
-              <>
-                <ConversationList
-                  conversations={activeConversations}
-                  conversationId={conversationId}
-                  emptyLabel="No active conversations"
-                  onArchive={(id) => {
-                    if (conversationId === id) setConversationId(null)
-                    archiveConv({ id: id as any, isActive: false })
-                  }}
-                  onDelete={(id) => {
-                    if (!confirm("Delete this conversation permanently?")) return
-                    if (conversationId === id) setConversationId(null)
-                    deleteConv({ id: id as any })
-                  }}
-                  onSelect={handleSelectConversation}
-                />
-                {showArchived && archivedConversations.length > 0 && (
-                  <div className="mt-3 border-t pt-2">
-                    <p className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Archived
-                    </p>
-                    <ConversationList
-                      conversations={archivedConversations}
-                      conversationId={conversationId}
-                      emptyLabel="No archived conversations"
-                      onArchive={(id) =>
-                        archiveConv({ id: id as any, isActive: true })
-                      }
-                      onDelete={(id) => {
-                        if (!confirm("Delete this conversation permanently?")) return
-                        if (conversationId === id) setConversationId(null)
-                        deleteConv({ id: id as any })
-                      }}
-                      onSelect={handleSelectConversation}
-                      archived
-                    />
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-          {archivedConversations.length > 0 && (
-            <div className="border-t p-2">
-              <button
-                onClick={() => setShowArchived((value) => !value)}
-                className="w-full rounded px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {showArchived
-                  ? "Hide archived conversations"
-                  : `Show archived conversations (${archivedConversations.length})`}
-              </button>
-            </div>
-          )}
-        </aside>
-      )}
-
-      <aside className="flex w-56 flex-col gap-2 overflow-y-auto border-r p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Modules
+      <aside className="flex w-56 flex-col border-r">
+        <div className="flex items-center justify-between border-y px-3 py-2">
+          <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+            Conversations
           </h2>
           <button
-            onClick={() => setShowSidebar(!showSidebar)}
+            onClick={handleNewConversation}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            {showSidebar ? "Hide" : "Show"}
+            + New
           </button>
         </div>
-        <button
-          onClick={() => handleSelectModule(null)}
-          className={`rounded px-2 py-1 text-left text-sm transition-colors ${
-            pinnedModuleId === null ? "bg-muted font-medium" : "hover:bg-muted"
-          }`}
-        >
-          All Modules
-        </button>
-        {moduleTree.length === 0 && (
-          <p className="text-xs text-muted-foreground">No modules defined yet</p>
+        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+          {scopedConversations.length === 0 ? (
+            <p className="px-2 text-xs text-muted-foreground">
+              {pinnedModuleId
+                ? "No conversations in this module"
+                : "No conversations yet"}
+            </p>
+          ) : (
+            <>
+              <ConversationList
+                conversations={activeConversations}
+                conversationId={conversationId}
+                emptyLabel={
+                  pinnedModuleId
+                    ? "No active conversations in this module"
+                    : "No active conversations"
+                }
+                onArchive={(id) => {
+                  if (conversationId === id) setConversationId(null)
+                  archiveConv({ id: id as any, isActive: false })
+                }}
+                onDelete={(id) => {
+                  if (!confirm("Delete this conversation permanently?")) return
+                  if (conversationId === id) setConversationId(null)
+                  deleteConv({ id: id as any })
+                }}
+                onSelect={handleSelectConversation}
+              />
+              {showArchived && archivedConversations.length > 0 && (
+                <div className="mt-3 border-t pt-2">
+                  <p className="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
+                    Archived
+                  </p>
+                  <ConversationList
+                    conversations={archivedConversations}
+                    conversationId={conversationId}
+                    emptyLabel="No archived conversations"
+                    onArchive={(id) =>
+                      archiveConv({ id: id as any, isActive: true })
+                    }
+                    onDelete={(id) => {
+                      if (!confirm("Delete this conversation permanently?"))
+                        return
+                      if (conversationId === id) setConversationId(null)
+                      deleteConv({ id: id as any })
+                    }}
+                    onSelect={handleSelectConversation}
+                    archived
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        {archivedConversations.length > 0 && (
+          <div className="border-t p-2">
+            <button
+              onClick={() => setShowArchived((value) => !value)}
+              className="w-full rounded px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {showArchived
+                ? "Hide archived conversations"
+                : `Show archived conversations (${archivedConversations.length})`}
+            </button>
+          </div>
         )}
-        {flatModules.map((mod: any) => (
+      </aside>
+
+      <aside className="flex w-56 flex-col overflow-y-auto border-r">
+        <div className="flex items-center justify-between border-y px-3 py-2">
+          <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+            Modules
+          </h2>
+        </div>
+        <div className="flex flex-col gap-0.5 p-2">
           <button
-            key={mod._id}
-            onClick={() => handleSelectModule(mod._id)}
-            className={`w-full rounded px-2 py-1 text-left text-sm transition-colors ${
-              pinnedModuleId === mod._id ? "bg-muted font-medium" : "hover:bg-muted"
+            onClick={() => handleSelectModule(null)}
+            className={`rounded px-2 py-1 text-left text-sm transition-colors ${
+              pinnedModuleId === null
+                ? "bg-muted font-medium"
+                : "hover:bg-muted"
             }`}
-            style={{ paddingLeft: `${0.5 + mod.depth * 0.75}rem` }}
           >
-            {mod.name}
+            All Modules
           </button>
-        ))}
+          {moduleTree.length === 0 && (
+            <p className="px-2 text-xs text-muted-foreground">
+              No modules defined yet
+            </p>
+          )}
+          {moduleTree.map((mod: any) => (
+            <ModuleTreeItem
+              key={mod._id}
+              mod={mod}
+              activeModuleId={pinnedModuleId}
+              collapsedModuleIds={collapsedModuleIds}
+              onSelect={handleSelectModule}
+              onToggle={toggleModuleExpanded}
+            />
+          ))}
+        </div>
       </aside>
 
       <main className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-6 py-3">
-          <div>
-            <h1 className="text-sm font-medium">{safeKb.title}</h1>
+        <header className="flex items-center justify-between border-y px-6 py-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-medium">{safeKb.title}</h1>
             {pinnedModuleName && (
               <p className="text-xs text-muted-foreground">
                 Focused on: {pinnedModuleName}
               </p>
             )}
             {currentConv && !pinnedModuleName && (
-              <p className="text-xs text-muted-foreground">{currentConv.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {currentConv.title}
+              </p>
             )}
           </div>
         </header>
@@ -235,8 +284,12 @@ export default function KBChatPage({ params }: { params: Promise<{ id: string }>
               <div className="flex flex-col items-center gap-3">
                 <p className="text-center text-sm text-muted-foreground">
                   Ask a question about{" "}
-                  <span className="font-medium text-foreground">{safeKb.title}</span>
-                  {pinnedModuleName ? " (filtered to the selected module)" : " to get started"}
+                  <span className="font-medium text-foreground">
+                    {safeKb.title}
+                  </span>
+                  {pinnedModuleName
+                    ? " (filtered to the selected module)"
+                    : " to get started"}
                 </p>
                 <button
                   onClick={handleNewConversation}
@@ -248,24 +301,33 @@ export default function KBChatPage({ params }: { params: Promise<{ id: string }>
             </div>
           ) : messages === undefined ? (
             <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-muted-foreground">Loading messages...</p>
+              <p className="text-sm text-muted-foreground">
+                Loading messages...
+              </p>
             </div>
           ) : messages.length === 0 ? (
             <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-muted-foreground">Send a message to start the conversation</p>
+              <p className="text-sm text-muted-foreground">
+                Send a message to start the conversation
+              </p>
             </div>
           ) : (
             messages.map((msg: any) => (
-              <div key={msg._id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div
+                key={msg._id}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
                 <div
                   className={`max-w-[70%] rounded-lg px-4 py-2 text-sm leading-relaxed ${
-                    msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted"
                   }`}
                 >
                   {msg.content}
                   {msg.role === "assistant" && msg.sourceChunks?.length > 0 && (
                     <div className="mt-3 border-t border-border/60 pt-2">
-                      <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      <p className="mb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
                         Sources
                       </p>
                       <div className="flex flex-col gap-1.5">
@@ -323,6 +385,89 @@ function flattenModuleTree(modules: any[], depth = 0): any[] {
   ])
 }
 
+function ModuleTreeItem({
+  mod,
+  activeModuleId,
+  collapsedModuleIds,
+  onSelect,
+  onToggle,
+}: {
+  mod: any
+  activeModuleId: string | null
+  collapsedModuleIds: Set<string>
+  onSelect: (id: string) => void
+  onToggle: (id: string) => void
+}) {
+  const children = mod.children ?? []
+  const hasChildren = children.length > 0
+  const isExpanded = hasChildren && !collapsedModuleIds.has(mod._id)
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div
+        className={`flex items-center rounded transition-colors ${
+          activeModuleId === mod._id ? "bg-muted font-medium" : "hover:bg-muted"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => hasChildren && onToggle(mod._id)}
+          aria-label={isExpanded ? "Hide submodules" : "Show submodules"}
+          className="flex h-7 w-10 shrink-0 items-center justify-center text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+          disabled={!hasChildren}
+        >
+          {hasChildren ? (isExpanded ? "[-]" : "[+]") : ""}
+        </button>
+        <button
+          onClick={() => onSelect(mod._id)}
+          className="min-w-0 flex-1 truncate py-1 pr-2 text-left text-sm"
+        >
+          {mod.name}
+        </button>
+      </div>
+      {hasChildren && isExpanded && (
+        <div className="ml-4 flex flex-col gap-0.5 border-l pl-2">
+          {children.map((child: any) => (
+            <ModuleTreeItem
+              key={child._id}
+              mod={child}
+              activeModuleId={activeModuleId}
+              collapsedModuleIds={collapsedModuleIds}
+              onSelect={onSelect}
+              onToggle={onToggle}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function getDescendantModuleIds(modules: any[], moduleId: string): string[] {
+  const descendants: string[] = []
+  const target = findModuleById(modules, moduleId)
+  if (!target) return descendants
+
+  function collect(children: any[]) {
+    for (const child of children) {
+      descendants.push(child._id)
+      collect(child.children ?? [])
+    }
+  }
+
+  collect(target.children ?? [])
+  return descendants
+}
+
+function findModuleById(modules: any[], moduleId: string): any | null {
+  for (const mod of modules) {
+    if (mod._id === moduleId) return mod
+    const child = findModuleById(mod.children ?? [], moduleId)
+    if (child) return child
+  }
+  return null
+}
+
 function ConversationList({
   conversations,
   conversationId,
@@ -377,7 +522,7 @@ function ConversationList({
                 event.stopPropagation()
                 onArchive(conv._id)
               }}
-              className="text-[10px] text-muted-foreground opacity-70 hover:text-foreground group-hover:opacity-100"
+              className="text-[10px] text-muted-foreground opacity-70 group-hover:opacity-100 hover:text-foreground"
             >
               {archived ? "Unarchive" : "Archive"}
             </button>
@@ -386,7 +531,7 @@ function ConversationList({
                 event.stopPropagation()
                 onDelete(conv._id)
               }}
-              className="text-[10px] text-destructive opacity-70 hover:text-destructive group-hover:opacity-100"
+              className="text-[10px] text-destructive opacity-70 group-hover:opacity-100 hover:text-destructive"
             >
               Delete
             </button>

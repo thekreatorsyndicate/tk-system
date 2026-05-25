@@ -1,6 +1,6 @@
 import { v } from "convex/values"
 import { internalMutation, internalQuery } from "./_generated/server"
-import type { Id } from "./_generated/dataModel"
+import type { Doc, Id } from "./_generated/dataModel"
 
 export const getProfile = internalQuery({
   args: { tokenIdentifier: v.string() },
@@ -34,29 +34,23 @@ export const getChunks = internalQuery({
     pinnedModuleId: v.optional(v.id("modules")),
   },
   handler: async (ctx, args) => {
-    const chunks = await ctx.db
-      .query("documentChunks")
-      .withIndex("by_knowledgeBaseId", (q) =>
-        q.eq("knowledgeBaseId", args.knowledgeBaseId),
-      )
-      .collect()
-
     const modules = await ctx.db
       .query("modules")
       .withIndex("by_knowledgeBaseId", (q) =>
         q.eq("knowledgeBaseId", args.knowledgeBaseId),
       )
-      .collect()
+      .take(5000)
 
     const documents = await ctx.db
       .query("documents")
       .withIndex("by_knowledgeBaseId", (q) =>
         q.eq("knowledgeBaseId", args.knowledgeBaseId),
       )
-      .collect()
+      .take(5000)
 
     const moduleById = new Map(modules.map((mod) => [mod._id, mod]))
-    const documentById = new Map(documents.map((doc) => [doc._id, doc]))
+    const readyDocuments = documents.filter((document) => document.status === "ready")
+    const documentById = new Map(readyDocuments.map((doc) => [doc._id, doc]))
 
     function getModulePath(moduleId: Id<"modules"> | undefined): string[] {
       if (!moduleId) return []
@@ -80,13 +74,59 @@ export const getChunks = internalQuery({
       return ids
     }
 
-    const selectedScopeIds = getScopeIds(args.pinnedModuleId)
+    function getDescendantModuleIds(moduleId: Id<"modules">): Id<"modules">[] {
+      const descendants = [moduleId]
+      for (const courseModule of modules) {
+        let current = courseModule.parentId
+          ? moduleById.get(courseModule.parentId)
+          : undefined
+        while (current) {
+          if (current._id === moduleId) {
+            descendants.push(courseModule._id)
+            break
+          }
+          current = current.parentId ? moduleById.get(current.parentId) : undefined
+        }
+      }
+      return descendants
+    }
 
-    return chunks.map((chunk) => {
+    const selectedScopeIds = getScopeIds(args.pinnedModuleId)
+    let chunks: Doc<"documentChunks">[] = []
+
+    if (args.pinnedModuleId) {
+      const moduleIds = getDescendantModuleIds(args.pinnedModuleId)
+      const scopedChunks = await Promise.all(
+        moduleIds.map((moduleId) =>
+          ctx.db
+            .query("documentChunks")
+            .withIndex("by_knowledgeBaseId_and_moduleId", (q) =>
+              q.eq("knowledgeBaseId", args.knowledgeBaseId).eq("moduleId", moduleId),
+            )
+            .take(1000),
+        ),
+      )
+      chunks = scopedChunks.flat()
+    }
+
+    if (chunks.length === 0) {
+      chunks = await ctx.db
+        .query("documentChunks")
+        .withIndex("by_knowledgeBaseId", (q) =>
+          q.eq("knowledgeBaseId", args.knowledgeBaseId),
+        )
+        .take(5000)
+    }
+
+    return chunks.flatMap((chunk) => {
       const document = documentById.get(chunk.documentId)
+      if (!document) return []
+
       return {
         ...chunk,
         documentFilename: document?.filename,
+        documentEmbeddingModel: document.embeddingModel,
+        documentEmbeddingDimensions: document.embeddingDimensions,
         modulePath: getModulePath(chunk.moduleId),
         scopeIds: getScopeIds(chunk.moduleId),
         selectedScopeIds,

@@ -72,6 +72,7 @@ export default function KBDetailPage({ params }: { params: Promise<{ id: string 
   const generateUrl = useMutation(api.documents.generateUploadUrl)
   const createDocRecord = useMutation(api.documents.createRecord)
   const removeDoc = useMutation(api.documents.remove)
+  const retryDoc = useMutation(api.documents.retryProcessing)
 
   const [moduleName, setModuleName] = useState("")
   const [uploadModuleId, setUploadModuleId] = useState<string>("")
@@ -314,23 +315,36 @@ export default function KBDetailPage({ params }: { params: Promise<{ id: string 
               </h3>
               <div className="flex flex-col gap-2">
                 {group.documents.map((doc: any) => (
-                  <div key={doc._id} className="flex items-center justify-between rounded border px-3 py-2">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm">{doc.filename}</span>
-                      <span className="flex gap-2 text-xs text-muted-foreground">
-                        <span className={
-                          doc.status === "ready" ? "text-green-600" :
-                          doc.status === "error" ? "text-destructive" :
-                          "text-muted-foreground"
-                        }>
-                          {doc.status}
-                          {doc.errorMessage && ` — ${doc.errorMessage}`}
+                  <div key={doc._id} className="flex items-start justify-between gap-4 rounded border px-3 py-2">
+                    <div className="min-w-0 flex flex-col gap-1">
+                      <span className="truncate text-sm">{doc.filename}</span>
+                      <span className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span className={getStatusClassName(doc.status)}>
+                          {formatStatus(doc.status)}
                         </span>
+                        {getDocumentMetadata(doc).map((item) => (
+                          <span key={item}>{item}</span>
+                        ))}
                       </span>
+                      {doc.errorMessage && (
+                        <span className="text-xs text-destructive">
+                          {doc.errorMessage}
+                        </span>
+                      )}
                     </div>
-                    <button onClick={() => removeDoc({ id: doc._id })} className="text-xs text-destructive">
-                      Delete
-                    </button>
+                    <div className="flex shrink-0 items-center gap-3">
+                      {doc.status === "error" && (
+                        <button
+                          onClick={() => retryDoc({ id: doc._id })}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Retry
+                        </button>
+                      )}
+                      <button onClick={() => removeDoc({ id: doc._id })} className="text-xs text-destructive">
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -347,6 +361,45 @@ function flattenModuleTree(modules: any[], depth = 0): any[] {
     { ...mod, depth },
     ...flattenModuleTree(mod.children ?? [], depth + 1),
   ])
+}
+
+function formatStatus(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function getStatusClassName(status: string) {
+  if (status === "ready") return "font-medium text-green-600"
+  if (status === "error") return "font-medium text-destructive"
+  if (status === "processing") return "font-medium text-blue-600"
+  return "font-medium text-muted-foreground"
+}
+
+function formatFileSize(bytes?: number) {
+  if (!bytes) return null
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatProcessedAt(timestamp?: number) {
+  if (!timestamp) return null
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp))
+}
+
+function getDocumentMetadata(doc: any) {
+  return [
+    doc.documentType?.toUpperCase(),
+    formatFileSize(doc.fileSize),
+    doc.chunkCount !== undefined ? `${doc.chunkCount} chunks` : null,
+    doc.embeddingModel,
+    doc.processedAt ? `Processed ${formatProcessedAt(doc.processedAt)}` : null,
+    doc.parserVersion ? `Parser ${doc.parserVersion}` : null,
+  ].filter(Boolean) as string[]
 }
 
 function getModulePath(module: any, modules: any[]): string[] {
