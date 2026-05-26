@@ -8,12 +8,15 @@ import { internal } from "./_generated/api"
 import PDFParser from "pdf2json"
 import mammoth from "mammoth"
 import { inferDocumentType, type DocumentType } from "./lib/documentTypes"
+import {
+  generateEmbedding,
+  getEmbeddingModel,
+  MOCK_EMBEDDING_DIMENSIONS,
+  resolveAiProvider,
+} from "./lib/aiProviders"
 
 const TARGET_CHUNK_CHARS = 4000
 const CHUNK_OVERLAP_CHARS = 800
-const MOCK_EMBEDDING_DIMENSIONS = 64
-const MOCK_EMBEDDING_MODEL = "mock-hash-64"
-const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 const PARSER_VERSION = "2026-05-25.1"
 
 type TextBlock = {
@@ -136,7 +139,7 @@ function buildBlocks(text: string): TextBlock[] {
         start,
         end,
         headingPath: headingPath.length > 0 ? headingPath : undefined,
-      }),
+      })
     )
   }
 
@@ -158,7 +161,10 @@ function getOverlapBlocks(blocks: TextBlock[]): TextBlock[] {
 }
 
 function blocksToChunk(blocks: TextBlock[]): TextChunk {
-  const content = blocks.map((block) => block.text).join("\n\n").trim()
+  const content = blocks
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim()
   return {
     content,
     sourceStart: blocks[0].start,
@@ -199,63 +205,6 @@ function chunkText(rawText: string): TextChunk[] {
   return chunks.filter((chunk) => chunk.content.length > 0)
 }
 
-async function generateEmbedding(
-  text: string,
-  apiKey: string | undefined,
-  useMockAi: boolean,
-): Promise<{ embedding: number[]; embeddingModel: string }> {
-  if (useMockAi) {
-    return {
-      embedding: generateMockEmbedding(text),
-      embeddingModel: MOCK_EMBEDDING_MODEL,
-    }
-  }
-
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: OPENAI_EMBEDDING_MODEL,
-      input: text,
-    }),
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`OpenAI embedding failed: ${err}`)
-  }
-
-  const data = await res.json()
-  return {
-    embedding: data.data[0].embedding,
-    embeddingModel: OPENAI_EMBEDDING_MODEL,
-  }
-}
-
-function generateMockEmbedding(text: string): number[] {
-  const embedding = Array.from({ length: MOCK_EMBEDDING_DIMENSIONS }, () => 0)
-  for (const word of tokenize(text)) {
-    let hash = 0
-    for (let i = 0; i < word.length; i++) {
-      hash = (hash * 31 + word.charCodeAt(i)) | 0
-    }
-    embedding[Math.abs(hash) % MOCK_EMBEDDING_DIMENSIONS] += 1
-  }
-  const norm = Math.hypot(...embedding) || 1
-  return embedding.map((value) => value / norm)
-}
-
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 2)
-}
-
 function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const parser = new PDFParser()
@@ -275,7 +224,7 @@ async function extractTextFromStorage(
   storageId: string,
   contentType: string,
   filename: string,
-  documentType?: DocumentType,
+  documentType?: DocumentType
 ): Promise<string> {
   const inferred = documentType
     ? { documentType }
@@ -319,8 +268,14 @@ export const processDocument = internalAction({
     documentId: v.id("documents"),
   },
   handler: async (ctx, args) => {
-    const apiKey = globalThis.process.env.OPENAI_API_KEY
-    const useMockAi = !apiKey || globalThis.process.env.MOCK_AI !== "false"
+    const openAiApiKey = globalThis.process.env.OPENAI_API_KEY
+    const geminiApiKey = globalThis.process.env.GEMINI_API_KEY
+    const provider = resolveAiProvider({
+      requestedProvider: globalThis.process.env.AI_PROVIDER,
+      mockAi: globalThis.process.env.MOCK_AI,
+      openAiApiKey,
+      geminiApiKey,
+    })
 
     const doc = await ctx.runQuery(internal.documents.getInternal, {
       id: args.documentId,
@@ -342,19 +297,25 @@ export const processDocument = internalAction({
         doc.storageId,
         doc.contentType,
         doc.filename,
-        doc.documentType,
+        doc.documentType
       )
       const chunks = chunkText(text)
-      if (chunks.length === 0) throw new Error("No text content found in document")
+      if (chunks.length === 0)
+        throw new Error("No text content found in document")
 
-      let embeddingModel = useMockAi
-        ? MOCK_EMBEDDING_MODEL
-        : OPENAI_EMBEDDING_MODEL
-      let embeddingDimensions = useMockAi ? MOCK_EMBEDDING_DIMENSIONS : 0
+      let embeddingModel = getEmbeddingModel(provider)
+      let embeddingDimensions =
+        provider === "mock" ? MOCK_EMBEDDING_DIMENSIONS : 0
 
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
         const chunk = chunks[chunkIndex]
-        const generated = await generateEmbedding(chunk.content, apiKey, useMockAi)
+        const generated = await generateEmbedding({
+          text: chunk.content,
+          provider,
+          task: "document",
+          openAiApiKey,
+          geminiApiKey,
+        })
         embeddingModel = generated.embeddingModel
         embeddingDimensions = generated.embedding.length
 
@@ -388,8 +349,7 @@ export const processDocument = internalAction({
     } catch (error) {
       await cleanupDocumentChunks(ctx, args.documentId)
 
-      const message =
-        error instanceof Error ? error.message : "Unknown error"
+      const message = error instanceof Error ? error.message : "Unknown error"
       await ctx.runMutation(internal.processDocument.updateStatus, {
         documentId: args.documentId,
         status: "error",

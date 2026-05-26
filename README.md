@@ -9,7 +9,7 @@ upload source documents, publish courses, and preview the student experience.
 - Next.js 16 with React 19 and Tailwind CSS
 - Convex for backend functions, database, file storage, and scheduled document processing
 - Clerk for authentication
-- OpenAI embeddings and chat, with mock AI fallback for local development
+- OpenAI embeddings and chat by default, optional Gemini test provider, and mock AI fallback for local development
 - shadcn/ui-compatible components and app styling
 
 ## Features
@@ -46,6 +46,22 @@ npx convex env set OPENAI_API_KEY your_openai_key
 ```
 
 `OPENAI_API_KEY` is optional while `MOCK_AI` is not set to `false`.
+OpenAI remains the default real provider when `MOCK_AI=false`.
+
+To test real AI calls with Gemini's free tier, create a Gemini API key in
+Google AI Studio and set:
+
+```bash
+npx convex env set MOCK_AI false
+npx convex env set AI_PROVIDER gemini
+npx convex env set GEMINI_API_KEY your_gemini_key
+```
+
+Switch back to OpenAI with:
+
+```bash
+npx convex env set AI_PROVIDER openai
+```
 
 Run the frontend:
 
@@ -85,3 +101,8 @@ By default, local development can run with `MOCK_AI=true`, which uses
 deterministic mock embeddings and replies so the app works without paid model
 calls. Set `MOCK_AI=false` and provide `OPENAI_API_KEY` to use OpenAI for
 embeddings and chat responses.
+
+Set `AI_PROVIDER=gemini` with `GEMINI_API_KEY` to use Gemini instead. Gemini
+uses `gemini-embedding-001` for document/query embeddings and `gemini-2.5-flash`
+for chat. Existing OpenAI-indexed documents are not embedding-compatible with
+Gemini queries, so reprocess uploaded documents after switching providers.

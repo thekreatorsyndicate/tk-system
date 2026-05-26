@@ -8,7 +8,7 @@ export const getProfile = internalQuery({
     return await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", args.tokenIdentifier),
+        q.eq("tokenIdentifier", args.tokenIdentifier)
       )
       .unique()
   },
@@ -28,7 +28,7 @@ export const getKB = internalQuery({
   },
 })
 
-export const getChunks = internalQuery({
+export const getCandidateChunks = internalQuery({
   args: {
     knowledgeBaseId: v.id("knowledgeBases"),
     pinnedModuleId: v.optional(v.id("modules")),
@@ -37,19 +37,21 @@ export const getChunks = internalQuery({
     const modules = await ctx.db
       .query("modules")
       .withIndex("by_knowledgeBaseId", (q) =>
-        q.eq("knowledgeBaseId", args.knowledgeBaseId),
+        q.eq("knowledgeBaseId", args.knowledgeBaseId)
       )
       .take(5000)
 
     const documents = await ctx.db
       .query("documents")
       .withIndex("by_knowledgeBaseId", (q) =>
-        q.eq("knowledgeBaseId", args.knowledgeBaseId),
+        q.eq("knowledgeBaseId", args.knowledgeBaseId)
       )
       .take(5000)
 
     const moduleById = new Map(modules.map((mod) => [mod._id, mod]))
-    const readyDocuments = documents.filter((document) => document.status === "ready")
+    const readyDocuments = documents.filter(
+      (document) => document.status === "ready"
+    )
     const documentById = new Map(readyDocuments.map((doc) => [doc._id, doc]))
 
     function getModulePath(moduleId: Id<"modules"> | undefined): string[] {
@@ -58,7 +60,9 @@ export const getChunks = internalQuery({
       let current = moduleById.get(moduleId)
       while (current) {
         path.unshift(current.name)
-        current = current.parentId ? moduleById.get(current.parentId) : undefined
+        current = current.parentId
+          ? moduleById.get(current.parentId)
+          : undefined
       }
       return path
     }
@@ -69,7 +73,9 @@ export const getChunks = internalQuery({
       let current = moduleById.get(moduleId)
       while (current) {
         ids.push(current._id)
-        current = current.parentId ? moduleById.get(current.parentId) : undefined
+        current = current.parentId
+          ? moduleById.get(current.parentId)
+          : undefined
       }
       return ids
     }
@@ -85,38 +91,25 @@ export const getChunks = internalQuery({
             descendants.push(courseModule._id)
             break
           }
-          current = current.parentId ? moduleById.get(current.parentId) : undefined
+          current = current.parentId
+            ? moduleById.get(current.parentId)
+            : undefined
         }
       }
       return descendants
     }
 
     const selectedScopeIds = getScopeIds(args.pinnedModuleId)
-    let chunks: Doc<"documentChunks">[] = []
+    const descendantModuleIds = args.pinnedModuleId
+      ? new Set(getDescendantModuleIds(args.pinnedModuleId))
+      : undefined
 
-    if (args.pinnedModuleId) {
-      const moduleIds = getDescendantModuleIds(args.pinnedModuleId)
-      const scopedChunks = await Promise.all(
-        moduleIds.map((moduleId) =>
-          ctx.db
-            .query("documentChunks")
-            .withIndex("by_knowledgeBaseId_and_moduleId", (q) =>
-              q.eq("knowledgeBaseId", args.knowledgeBaseId).eq("moduleId", moduleId),
-            )
-            .take(1000),
-        ),
+    const chunks: Doc<"documentChunks">[] = await ctx.db
+      .query("documentChunks")
+      .withIndex("by_knowledgeBaseId", (q) =>
+        q.eq("knowledgeBaseId", args.knowledgeBaseId)
       )
-      chunks = scopedChunks.flat()
-    }
-
-    if (chunks.length === 0) {
-      chunks = await ctx.db
-        .query("documentChunks")
-        .withIndex("by_knowledgeBaseId", (q) =>
-          q.eq("knowledgeBaseId", args.knowledgeBaseId),
-        )
-        .take(5000)
-    }
+      .take(5000)
 
     return chunks.flatMap((chunk) => {
       const document = documentById.get(chunk.documentId)
@@ -124,12 +117,15 @@ export const getChunks = internalQuery({
 
       return {
         ...chunk,
-        documentFilename: document?.filename,
         documentEmbeddingModel: document.embeddingModel,
         documentEmbeddingDimensions: document.embeddingDimensions,
         modulePath: getModulePath(chunk.moduleId),
         scopeIds: getScopeIds(chunk.moduleId),
         selectedScopeIds,
+        isInPinnedScope:
+          !descendantModuleIds ||
+          (chunk.moduleId !== undefined &&
+            descendantModuleIds.has(chunk.moduleId)),
       }
     })
   },
@@ -141,7 +137,7 @@ export const getPreviousMessages = internalQuery({
     return await ctx.db
       .query("messages")
       .withIndex("by_conversationId", (q) =>
-        q.eq("conversationId", args.conversationId),
+        q.eq("conversationId", args.conversationId)
       )
       .order("asc")
       .take(100)
@@ -156,15 +152,20 @@ export const insertMessage = internalMutation({
     sourceChunks: v.optional(
       v.array(
         v.object({
+          sourceNumber: v.optional(v.number()),
           chunkId: v.id("documentChunks"),
           documentId: v.id("documents"),
           moduleId: v.optional(v.id("modules")),
           modulePath: v.optional(v.array(v.string())),
+          headingPath: v.optional(v.array(v.string())),
           documentFilename: v.optional(v.string()),
           content: v.string(),
           score: v.number(),
-        }),
-      ),
+          sourceKind: v.optional(
+            v.union(v.literal("direct"), v.literal("adjacent"))
+          ),
+        })
+      )
     ),
   },
   handler: async (ctx, args) => {

@@ -40,8 +40,8 @@ export default defineSchema({
         v.literal("pdf"),
         v.literal("docx"),
         v.literal("txt"),
-        v.literal("md"),
-      ),
+        v.literal("md")
+      )
     ),
     fileSize: v.optional(v.number()),
     parserVersion: v.optional(v.string()),
@@ -53,7 +53,7 @@ export default defineSchema({
       v.literal("uploading"),
       v.literal("processing"),
       v.literal("ready"),
-      v.literal("error"),
+      v.literal("error")
     ),
     errorMessage: v.optional(v.string()),
   })
@@ -102,15 +102,20 @@ export default defineSchema({
     sourceChunks: v.optional(
       v.array(
         v.object({
+          sourceNumber: v.optional(v.number()),
           chunkId: v.id("documentChunks"),
           documentId: v.id("documents"),
           moduleId: v.optional(v.id("modules")),
           modulePath: v.optional(v.array(v.string())),
+          headingPath: v.optional(v.array(v.string())),
           documentFilename: v.optional(v.string()),
           content: v.string(),
           score: v.number(),
-        }),
-      ),
+          sourceKind: v.optional(
+            v.union(v.literal("direct"), v.literal("adjacent"))
+          ),
+        })
+      )
     ),
   }).index("by_conversationId", ["conversationId"]),
 })

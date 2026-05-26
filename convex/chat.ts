@@ -4,23 +4,56 @@ import { v } from "convex/values"
 import { action, mutation, query } from "./_generated/server"
 import { internal } from "./_generated/api"
 import type { Id } from "./_generated/dataModel"
+import {
+  generateChatReply,
+  generateEmbedding,
+  generateMockEmbedding,
+  getEmbeddingModel,
+  MOCK_EMBEDDING_MODEL,
+  resolveAiProvider,
+} from "./lib/aiProviders"
 
 type ChatSource = {
+  sourceNumber: number
   chunkId: Id<"documentChunks">
   documentId: Id<"documents">
   moduleId?: Id<"modules">
   modulePath?: string[]
-  documentFilename?: string
+  headingPath?: string[]
   content: string
   score: number
+  sourceKind: "direct" | "adjacent"
+}
+
+type CandidateChunk = {
+  _id: Id<"documentChunks">
+  documentId: Id<"documents">
+  knowledgeBaseId: Id<"knowledgeBases">
+  moduleId?: Id<"modules">
+  content: string
+  embedding: number[]
+  embeddingModel?: string
+  embeddingDimensions?: number
+  chunkIndex?: number
+  headingPath?: string[]
+  modulePath?: string[]
+  scopeIds?: string[]
+  selectedScopeIds?: string[]
 }
 
 type RankedChunk = {
-  chunk: any
+  chunk: CandidateChunk
   score: number
   vectorScore: number
   lexicalScore: number
   scopePriority: number
+}
+
+type ContextChunk = {
+  chunk: CandidateChunk
+  score: number
+  sourceNumber: number
+  sourceKind: "direct" | "adjacent"
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -38,36 +71,30 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / denominator
 }
 
+const MAX_DIRECT_MATCHES = 6
+const MAX_DIRECT_MATCHES_PER_DOCUMENT = 2
+const MAX_DIRECT_MATCHES_PER_MODULE = 3
+const MAX_CONTEXT_CHUNKS = 12
+const ADJACENT_CHUNK_WINDOW = 1
 const SIMILARITY_THRESHOLD = 0.5
-const MAX_CONTEXT_CHUNKS = 5
-const MOCK_EMBEDDING_DIMENSIONS = 64
-const MOCK_EMBEDDING_MODEL = "mock-hash-64"
-const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+const MOCK_SIMILARITY_THRESHOLD = 0.2
 
 function buildSystemPrompt(kbTitle: string): string {
-  return `You are an AI tutor for the course "${kbTitle}". Your role is to help students understand the course material.
+  return `You are an AI tutor for the course "${kbTitle}".
 
-RULES:
-1. ONLY answer questions using the provided context from the course materials below.
-2. If the question CAN be answered from the context, answer clearly and cite the relevant parts.
-3. If the question CANNOT be answered from the provided context, respond with: "I can only answer questions about "${kbTitle}". Please ask a question related to this course material."
-4. Do NOT make up information, speculate, or use any external knowledge.
-5. Do NOT answer questions about unrelated topics, even if you know the answer.
-6. Keep responses focused on the course material. Be concise and educational.
-7. Mention the module/submodule path from the provided source labels when answering.`
-}
+Your job is to act as a teaching layer between the student and the course material.
 
-function generateMockEmbedding(text: string): number[] {
-  const embedding = Array.from({ length: MOCK_EMBEDDING_DIMENSIONS }, () => 0)
-  for (const word of tokenize(text)) {
-    let hash = 0
-    for (let i = 0; i < word.length; i++) {
-      hash = (hash * 31 + word.charCodeAt(i)) | 0
-    }
-    embedding[Math.abs(hash) % MOCK_EMBEDDING_DIMENSIONS] += 1
-  }
-  const norm = Math.hypot(...embedding) || 1
-  return embedding.map((value) => value / norm)
+Rules:
+1. Answer only from the provided course excerpts.
+2. Do not use outside knowledge.
+3. Explain the answer in clear, student-friendly language.
+4. When multiple sources are relevant, combine them into one coherent explanation.
+5. Cite source numbers inline like [1] or [2] for factual claims, but only cite sources you actually use in the answer.
+6. Refer to module/submodule names when identifying where information came from.
+7. Do not mention filenames, document IDs, chunk IDs, embeddings, or retrieval internals.
+8. If the excerpts do not support an answer, say: "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
+9. Prefer a concise teaching structure: direct answer first, explanation next, and key takeaways if useful.
+10. Never invent missing facts.`
 }
 
 function tokenize(text: string): string[] {
@@ -111,16 +138,25 @@ function lexicalScore(query: string, content: string): number {
   return matches / queryTerms.size
 }
 
-function buildMockReply(kbTitle: string, chunk: any): string {
-  const excerpt = chunk.content.replace(/\s+/g, " ").trim().slice(0, 700)
-  const source =
-    chunk.modulePath?.length > 0
-      ? chunk.modulePath.join(" > ")
-      : "course-level material"
-  return `Based on ${source} in "${kbTitle}": ${excerpt}`
+function buildMockReply(
+  kbTitle: string,
+  contextChunks: ContextChunk[]
+): string {
+  const directSource =
+    contextChunks.find((source) => source.sourceKind === "direct") ??
+    contextChunks[0]
+  const excerpt = directSource.chunk.content
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700)
+  const source = getModuleLabel(directSource.chunk)
+  return `Direct answer: Based on ${source} in "${kbTitle}", ${excerpt} [${directSource.sourceNumber}]\n\nKey takeaway: This answer is grounded in the course material from ${source}.`
 }
 
-function getScopePriority(chunk: any, pinnedModuleId: string | undefined): number {
+function getScopePriority(
+  chunk: CandidateChunk,
+  pinnedModuleId: Id<"modules"> | undefined
+): number {
   if (!pinnedModuleId) return 0
   const scopeIds: string[] = chunk.scopeIds ?? []
   const selectedScopeIds: string[] = chunk.selectedScopeIds ?? [pinnedModuleId]
@@ -130,16 +166,201 @@ function getScopePriority(chunk: any, pinnedModuleId: string | undefined): numbe
   return selectedScopeIds.length
 }
 
-function pickRelevant(scored: RankedChunk[], useMockAi: boolean): RankedChunk[] {
-  const threshold = useMockAi ? 0.2 : SIMILARITY_THRESHOLD
+function pickDirectMatches(
+  scored: RankedChunk[],
+  useMockAi: boolean
+): RankedChunk[] {
+  const threshold = useMockAi ? MOCK_SIMILARITY_THRESHOLD : SIMILARITY_THRESHOLD
   const matching = scored.filter((item) => item.score >= threshold)
   if (matching.length === 0) return []
 
-  const bestPriority = Math.min(...matching.map((item) => item.scopePriority))
-  return matching
-    .filter((item) => item.scopePriority === bestPriority)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_CONTEXT_CHUNKS)
+  const sorted = matching.sort(
+    (a, b) => a.scopePriority - b.scopePriority || b.score - a.score
+  )
+  const selected: RankedChunk[] = []
+  const selectedIds = new Set<string>()
+  const documentCounts = new Map<string, number>()
+  const moduleCounts = new Map<string, number>()
+
+  for (const item of sorted) {
+    if (selected.length >= MAX_DIRECT_MATCHES) break
+
+    const documentKey = item.chunk.documentId
+    const moduleKey = item.chunk.moduleId ?? "course-level"
+    const documentCount = documentCounts.get(documentKey) ?? 0
+    const moduleCount = moduleCounts.get(moduleKey) ?? 0
+
+    if (
+      documentCount >= MAX_DIRECT_MATCHES_PER_DOCUMENT ||
+      moduleCount >= MAX_DIRECT_MATCHES_PER_MODULE
+    ) {
+      continue
+    }
+
+    selected.push(item)
+    selectedIds.add(item.chunk._id)
+    documentCounts.set(documentKey, documentCount + 1)
+    moduleCounts.set(moduleKey, moduleCount + 1)
+  }
+
+  for (const item of sorted) {
+    if (selected.length >= MAX_DIRECT_MATCHES) break
+    if (selectedIds.has(item.chunk._id)) continue
+    selected.push(item)
+  }
+
+  return selected
+}
+
+function expandWithAdjacentChunks(args: {
+  selected: RankedChunk[]
+  allChunks: CandidateChunk[]
+  window: number
+  maxChunks: number
+}): ContextChunk[] {
+  const byDocumentAndIndex = new Map<string, CandidateChunk>()
+  for (const chunk of args.allChunks) {
+    if (typeof chunk.chunkIndex !== "number") continue
+    byDocumentAndIndex.set(`${chunk.documentId}:${chunk.chunkIndex}`, chunk)
+  }
+
+  const contextChunks: ContextChunk[] = []
+  const seenChunkIds = new Set<string>()
+
+  function addContextChunk(
+    chunk: CandidateChunk,
+    ranked: RankedChunk,
+    sourceNumber: number,
+    sourceKind: "direct" | "adjacent"
+  ) {
+    if (seenChunkIds.has(chunk._id)) return
+    seenChunkIds.add(chunk._id)
+    contextChunks.push({
+      chunk,
+      score: ranked.score,
+      sourceNumber,
+      sourceKind,
+    })
+  }
+
+  for (let i = 0; i < args.selected.length; i++) {
+    if (contextChunks.length >= args.maxChunks) break
+
+    const ranked = args.selected[i]
+    const sourceNumber = i + 1
+    addContextChunk(ranked.chunk, ranked, sourceNumber, "direct")
+
+    if (typeof ranked.chunk.chunkIndex !== "number") continue
+
+    for (let offset = -args.window; offset <= args.window; offset++) {
+      if (offset === 0 || contextChunks.length >= args.maxChunks) continue
+
+      const adjacent = byDocumentAndIndex.get(
+        `${ranked.chunk.documentId}:${ranked.chunk.chunkIndex + offset}`
+      )
+      if (!adjacent) continue
+      if (adjacent.knowledgeBaseId !== ranked.chunk.knowledgeBaseId) continue
+      if (adjacent.embeddingModel !== ranked.chunk.embeddingModel) continue
+      if (adjacent.embeddingDimensions !== ranked.chunk.embeddingDimensions) {
+        continue
+      }
+
+      addContextChunk(adjacent, ranked, sourceNumber, "adjacent")
+    }
+  }
+
+  return contextChunks
+}
+
+function getModuleLabel(chunk: CandidateChunk): string {
+  return chunk.modulePath && chunk.modulePath.length > 0
+    ? chunk.modulePath.join(" > ")
+    : "Course-level material"
+}
+
+function buildContextMessage(contextChunks: ContextChunk[], question: string) {
+  const context = contextChunks
+    .map((contextChunk) => {
+      const sourceLabel =
+        contextChunk.sourceKind === "adjacent"
+          ? `[Source ${contextChunk.sourceNumber} - adjacent context]`
+          : `[Source ${contextChunk.sourceNumber}]`
+      const sourceType =
+        contextChunk.sourceKind === "adjacent"
+          ? "surrounding context"
+          : "direct match"
+
+      return `${sourceLabel}
+Module: ${getModuleLabel(contextChunk.chunk)}
+Type: ${sourceType}
+Excerpt:
+${contextChunk.chunk.content}`
+    })
+    .join("\n\n")
+
+  return `Here are the relevant course excerpts for the current question:
+
+${context}
+
+Now answer the following question based ONLY on the excerpts above. Cite source numbers inline and use module/submodule names when helpful. Do not use external knowledge.
+Only cite a source number if that source directly supports the sentence or paragraph where the citation appears.
+
+${question}`
+}
+
+function extractCitedSourceNumbers(reply: string): Set<number> {
+  const cited = new Set<number>()
+  const citationMatches = reply.matchAll(/\[([\d,\s]+)\]/g)
+
+  for (const match of citationMatches) {
+    for (const value of match[1].split(",")) {
+      const sourceNumber = Number(value.trim())
+      if (Number.isInteger(sourceNumber) && sourceNumber > 0) {
+        cited.add(sourceNumber)
+      }
+    }
+  }
+
+  return cited
+}
+
+function buildSources(
+  contextChunks: ContextChunk[],
+  citedSourceNumbers: Set<number>
+): ChatSource[] {
+  const directModuleBySourceNumber = new Map<number, string>()
+  for (const contextChunk of contextChunks) {
+    if (contextChunk.sourceKind === "direct") {
+      directModuleBySourceNumber.set(
+        contextChunk.sourceNumber,
+        getModuleLabel(contextChunk.chunk)
+      )
+    }
+  }
+
+  return contextChunks.flatMap((contextChunk) => {
+    if (!citedSourceNumbers.has(contextChunk.sourceNumber)) return []
+
+    if (
+      contextChunk.sourceKind === "adjacent" &&
+      directModuleBySourceNumber.get(contextChunk.sourceNumber) ===
+        getModuleLabel(contextChunk.chunk)
+    ) {
+      return []
+    }
+
+    return {
+      sourceNumber: contextChunk.sourceNumber,
+      chunkId: contextChunk.chunk._id,
+      documentId: contextChunk.chunk.documentId,
+      moduleId: contextChunk.chunk.moduleId,
+      modulePath: contextChunk.chunk.modulePath,
+      headingPath: contextChunk.chunk.headingPath,
+      content: contextChunk.chunk.content.slice(0, 260),
+      score: contextChunk.score,
+      sourceKind: contextChunk.sourceKind,
+    }
+  })
 }
 
 // ── Public mutations ──
@@ -157,7 +378,7 @@ export const createConversation = mutation({
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique()
 
@@ -187,7 +408,7 @@ export const listConversations = query({
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique()
 
@@ -196,7 +417,7 @@ export const listConversations = query({
     const conversations = await ctx.db
       .query("conversations")
       .withIndex("by_userId_and_knowledgeBaseId", (q) =>
-        q.eq("userId", profile._id).eq("knowledgeBaseId", args.knowledgeBaseId),
+        q.eq("userId", profile._id).eq("knowledgeBaseId", args.knowledgeBaseId)
       )
       .order("desc")
       .take(50)
@@ -204,7 +425,7 @@ export const listConversations = query({
     const modules = await ctx.db
       .query("modules")
       .withIndex("by_knowledgeBaseId", (q) =>
-        q.eq("knowledgeBaseId", args.knowledgeBaseId),
+        q.eq("knowledgeBaseId", args.knowledgeBaseId)
       )
       .collect()
 
@@ -216,7 +437,9 @@ export const listConversations = query({
       let current = moduleById.get(moduleId)
       while (current) {
         path.unshift(current.name)
-        current = current.parentId ? moduleById.get(current.parentId) : undefined
+        current = current.parentId
+          ? moduleById.get(current.parentId)
+          : undefined
       }
       return path
     }
@@ -240,7 +463,7 @@ export const archiveConversation = mutation({
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique()
     if (!profile) throw new Error("Profile not found")
@@ -264,7 +487,7 @@ export const deleteConversation = mutation({
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique()
     if (!profile) throw new Error("Profile not found")
@@ -276,9 +499,7 @@ export const deleteConversation = mutation({
 
     const messages = await ctx.db
       .query("messages")
-      .withIndex("by_conversationId", (q) =>
-        q.eq("conversationId", args.id),
-      )
+      .withIndex("by_conversationId", (q) => q.eq("conversationId", args.id))
       .collect()
 
     for (const message of messages) {
@@ -305,7 +526,7 @@ export const getMessages = query({
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
       )
       .unique()
     if (!profile) return []
@@ -316,14 +537,14 @@ export const getMessages = query({
     return await ctx.db
       .query("messages")
       .withIndex("by_conversationId", (q) =>
-        q.eq("conversationId", args.conversationId),
+        q.eq("conversationId", args.conversationId)
       )
       .order("asc")
       .take(100)
   },
 })
 
-// ── Public action (OpenAI calls belong in actions, not mutations) ──
+// ── Public action (external AI calls belong in actions, not mutations) ──
 
 export const sendMessage = action({
   args: {
@@ -332,7 +553,7 @@ export const sendMessage = action({
   },
   handler: async (
     ctx,
-    args,
+    args
   ): Promise<{
     content: string
     sources: ChatSource[]
@@ -345,9 +566,12 @@ export const sendMessage = action({
     })
     if (!profile) throw new Error("Profile not found")
 
-    const conversation: any = await ctx.runQuery(internal.chatInternal.getConversation, {
-      id: args.conversationId,
-    })
+    const conversation: any = await ctx.runQuery(
+      internal.chatInternal.getConversation,
+      {
+        id: args.conversationId,
+      }
+    )
     if (!conversation) throw new Error("Conversation not found")
     if (conversation.userId !== profile._id) throw new Error("Not authorized")
 
@@ -362,52 +586,72 @@ export const sendMessage = action({
       content: args.content,
     })
 
-    const apiKey = process.env.OPENAI_API_KEY
-    let useMockAi = !apiKey || process.env.MOCK_AI !== "false"
+    const openAiApiKey = process.env.OPENAI_API_KEY
+    const geminiApiKey = process.env.GEMINI_API_KEY
+    let provider = resolveAiProvider({
+      requestedProvider: process.env.AI_PROVIDER,
+      mockAi: process.env.MOCK_AI,
+      openAiApiKey,
+      geminiApiKey,
+    })
+    let useMockAi = provider === "mock"
 
     let queryEmbedding: number[]
-    let queryEmbeddingModel = useMockAi
-      ? MOCK_EMBEDDING_MODEL
-      : OPENAI_EMBEDDING_MODEL
+    let queryEmbeddingModel = getEmbeddingModel(provider)
     if (useMockAi) {
       queryEmbedding = generateMockEmbedding(args.content)
     } else {
-      const embedRes = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: args.content,
-        }),
-      })
-
-      if (!embedRes.ok) {
-        const err = await embedRes.text()
-        console.warn(`OpenAI embedding failed, using mock chat: ${err}`)
+      try {
+        const generated = await generateEmbedding({
+          text: args.content,
+          provider,
+          task: "query",
+          openAiApiKey,
+          geminiApiKey,
+        })
+        queryEmbedding = generated.embedding
+        queryEmbeddingModel = generated.embeddingModel
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown embedding error"
+        console.warn(
+          `${provider} embedding failed, using mock chat: ${message}`
+        )
+        provider = "mock"
         useMockAi = true
         queryEmbeddingModel = MOCK_EMBEDDING_MODEL
         queryEmbedding = generateMockEmbedding(args.content)
-      } else {
-        const embedData = await embedRes.json()
-        queryEmbedding = embedData.data[0].embedding
       }
     }
 
-    const allKbChunks: any[] = await ctx.runQuery(internal.chatInternal.getChunks, {
-      knowledgeBaseId: conversation.knowledgeBaseId,
-      pinnedModuleId: conversation.pinnedModuleId,
-    })
-
-    const compatibleChunks = allKbChunks.filter(
-      (chunk: any) =>
-        chunk.embeddingModel === queryEmbeddingModel &&
-        chunk.embeddingDimensions === queryEmbedding.length,
+    const allCandidateChunks: CandidateChunk[] = await ctx.runQuery(
+      internal.chatInternal.getCandidateChunks,
+      {
+        knowledgeBaseId: conversation.knowledgeBaseId,
+        pinnedModuleId: conversation.pinnedModuleId,
+      }
     )
 
-    const scored: RankedChunk[] = compatibleChunks.map((chunk: any) => {
+    if (allCandidateChunks.length === 0) {
+      const notReady =
+        "The course material is not ready yet. Please ask again after the uploaded documents finish processing."
+
+      await ctx.runMutation(internal.chatInternal.insertMessage, {
+        conversationId: args.conversationId,
+        role: "assistant",
+        content: notReady,
+      })
+
+      return { content: notReady, sources: [] }
+    }
+
+    const compatibleChunks = allCandidateChunks.filter(
+      (chunk) =>
+        chunk.embeddingModel === queryEmbeddingModel &&
+        chunk.embeddingDimensions === queryEmbedding.length
+    )
+
+    const scored: RankedChunk[] = compatibleChunks.map((chunk) => {
       const vectorScore = cosineSimilarity(queryEmbedding, chunk.embedding)
       const textScore = lexicalScore(args.content, chunk.content)
       return {
@@ -419,13 +663,13 @@ export const sendMessage = action({
       }
     })
 
-    const relevant = pickRelevant(scored, useMockAi)
+    const directMatches = pickDirectMatches(scored, useMockAi)
 
-    if (relevant.length === 0) {
+    if (directMatches.length === 0) {
       const refusal: string =
-        allKbChunks.length > 0 && compatibleChunks.length === 0
-          ? `I can't access compatible course material for "${kb.title}" yet. Please ask again after the documents are reprocessed.`
-          : `I can only answer questions about "${kb.title}". Please ask a question related to this course material.`
+        compatibleChunks.length === 0
+          ? `I can't access compatible course material for "${kb.title}" yet. Please reprocess the uploaded documents for the selected AI provider, then ask again.`
+          : "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
 
       await ctx.runMutation(internal.chatInternal.insertMessage, {
         conversationId: args.conversationId,
@@ -436,29 +680,20 @@ export const sendMessage = action({
       return { content: refusal, sources: [] }
     }
 
-    const context = relevant
-      .map((r: any, i: number) => `[Source ${i + 1}]: ${r.chunk.content}`)
-      .join("\n\n")
-    const contextWithModules = relevant
-      .map((r: RankedChunk, i: number) => {
-        const modulePath =
-          r.chunk.modulePath?.length > 0
-            ? r.chunk.modulePath.join(" > ")
-            : "Course-level material"
-        const filename = r.chunk.documentFilename
-          ? `; File: ${r.chunk.documentFilename}`
-          : ""
-        return `[Source ${i + 1}; Module: ${modulePath}${filename}]: ${r.chunk.content}`
-      })
-      .join("\n\n")
+    const contextChunks = expandWithAdjacentChunks({
+      selected: directMatches,
+      allChunks: compatibleChunks,
+      window: ADJACENT_CHUNK_WINDOW,
+      maxChunks: MAX_CONTEXT_CHUNKS,
+    })
 
     const systemPrompt = buildSystemPrompt(kb.title)
 
     const previousMessages = await ctx.runQuery(
       internal.chatInternal.getPreviousMessages,
       {
-      conversationId: args.conversationId,
-      },
+        conversationId: args.conversationId,
+      }
     )
 
     const chatMessages = [
@@ -471,49 +706,30 @@ export const sendMessage = action({
 
     const contextMessage = {
       role: "user" as const,
-      content: `Here is the relevant course material for the current question:\n\n${contextWithModules || context}\n\nNow answer the following question based ONLY on the material above. Mention which module/submodule the information came from. Do not use any external knowledge:\n\n${args.content}`,
+      content: buildContextMessage(contextChunks, args.content),
     }
 
     let reply: string
     if (useMockAi) {
-      reply = buildMockReply(kb.title, relevant[0].chunk)
+      reply = buildMockReply(kb.title, contextChunks)
     } else {
-      const chatRes = await fetch(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [...chatMessages.slice(0, -1), contextMessage],
-            temperature: 0.3,
-            max_tokens: 1024,
-          }),
-        },
-      )
-
-      if (!chatRes.ok) {
-        const err = await chatRes.text()
-        console.warn(`OpenAI chat failed, using mock reply: ${err}`)
-        reply = buildMockReply(kb.title, relevant[0].chunk)
-      } else {
-        const chatData = await chatRes.json()
-        reply = chatData.choices[0].message.content
+      try {
+        reply = await generateChatReply({
+          provider,
+          messages: [...chatMessages.slice(0, -1), contextMessage],
+          openAiApiKey,
+          geminiApiKey,
+        })
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown chat error"
+        console.warn(`${provider} chat failed, using mock reply: ${message}`)
+        reply = buildMockReply(kb.title, contextChunks)
       }
     }
 
-    const sources: ChatSource[] = relevant.map((r: any) => ({
-      chunkId: r.chunk._id,
-      documentId: r.chunk.documentId,
-      moduleId: r.chunk.moduleId,
-      modulePath: r.chunk.modulePath,
-      documentFilename: r.chunk.documentFilename,
-      content: r.chunk.content.slice(0, 200),
-      score: r.score,
-    }))
+    const citedSourceNumbers = extractCitedSourceNumbers(reply)
+    const sources = buildSources(contextChunks, citedSourceNumbers)
 
     await ctx.runMutation(internal.chatInternal.insertMessage, {
       conversationId: args.conversationId,

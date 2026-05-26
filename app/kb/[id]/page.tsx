@@ -328,7 +328,7 @@ export default function KBChatPage({
                   {msg.role === "assistant" && msg.sourceChunks?.length > 0 && (
                     <div className="mt-3 border-t border-border/60 pt-2">
                       <p className="mb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
-                        Sources
+                        Course Sources
                       </p>
                       <div className="flex flex-col gap-1.5">
                         {msg.sourceChunks.map((source: any, index: number) => (
@@ -336,15 +336,27 @@ export default function KBChatPage({
                             key={source.chunkId}
                             className="rounded border border-border/60 px-2 py-1 text-xs text-muted-foreground"
                           >
-                            <span className="font-medium text-foreground">
-                              {index + 1}.{" "}
-                            </span>
-                            {source.modulePath?.length > 0 && (
-                              <span className="mr-1 font-medium text-foreground">
-                                {source.modulePath.join(" > ")}:
+                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="font-medium text-foreground">
+                                [{source.sourceNumber ?? index + 1}]
                               </span>
+                              <span className="font-medium text-foreground">
+                                {source.modulePath?.length > 0
+                                  ? source.modulePath.join(" > ")
+                                  : "Course-level material"}
+                              </span>
+                              {source.sourceKind === "adjacent" && (
+                                <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] uppercase">
+                                  supporting context
+                                </span>
+                              )}
+                            </div>
+                            {source.headingPath?.length > 0 && (
+                              <p className="mb-1 text-[11px] text-muted-foreground">
+                                {source.headingPath.join(" > ")}
+                              </p>
                             )}
-                            {source.content}
+                            <p>{source.content}</p>
                           </div>
                         ))}
                       </div>
