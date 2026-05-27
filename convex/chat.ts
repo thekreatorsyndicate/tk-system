@@ -12,6 +12,10 @@ import {
   MOCK_EMBEDDING_MODEL,
   resolveAiProvider,
 } from "./lib/aiProviders"
+import {
+  getAccessibleKnowledgeBase,
+  requireAccessibleKnowledgeBase,
+} from "./lib/authz"
 
 type ChatSource = {
   sourceNumber: number
@@ -384,8 +388,17 @@ export const createConversation = mutation({
 
     if (!profile) throw new Error("Profile not found")
 
-    const kb = await ctx.db.get("knowledgeBases", args.knowledgeBaseId)
-    if (!kb) throw new Error("Knowledge base not found")
+    const kb = await requireAccessibleKnowledgeBase(ctx, args.knowledgeBaseId)
+
+    if (args.pinnedModuleId) {
+      const pinnedModule = await ctx.db.get(args.pinnedModuleId)
+      if (
+        !pinnedModule ||
+        pinnedModule.knowledgeBaseId !== args.knowledgeBaseId
+      ) {
+        throw new Error("Module not found")
+      }
+    }
 
     const id = await ctx.db.insert("conversations", {
       knowledgeBaseId: args.knowledgeBaseId,
@@ -413,6 +426,9 @@ export const listConversations = query({
       .unique()
 
     if (!profile) return []
+
+    const kb = await getAccessibleKnowledgeBase(ctx, args.knowledgeBaseId)
+    if (!kb) return []
 
     const conversations = await ctx.db
       .query("conversations")
@@ -513,7 +529,24 @@ export const deleteConversation = mutation({
 export const getConversation = query({
   args: { id: v.id("conversations") },
   handler: async (ctx, args) => {
-    return await ctx.db.get("conversations", args.id)
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) return null
+
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique()
+    if (!profile) return null
+
+    const conversation = await ctx.db.get(args.id)
+    if (!conversation || conversation.userId !== profile._id) return null
+
+    const kb = await getAccessibleKnowledgeBase(ctx, conversation.knowledgeBaseId)
+    if (!kb) return null
+
+    return conversation
   },
 })
 
@@ -533,6 +566,9 @@ export const getMessages = query({
 
     const conversation = await ctx.db.get(args.conversationId)
     if (!conversation || conversation.userId !== profile._id) return []
+
+    const kb = await getAccessibleKnowledgeBase(ctx, conversation.knowledgeBaseId)
+    if (!kb) return []
 
     return await ctx.db
       .query("messages")
@@ -579,6 +615,9 @@ export const sendMessage = action({
       id: conversation.knowledgeBaseId,
     })
     if (!kb) throw new Error("Knowledge base not found")
+    if (!kb.isPublished && kb.coachId !== profile._id) {
+      throw new Error("Not authorized")
+    }
 
     await ctx.runMutation(internal.chatInternal.insertMessage, {
       conversationId: args.conversationId,

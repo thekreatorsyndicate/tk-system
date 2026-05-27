@@ -6,6 +6,11 @@ import { v } from "convex/values"
 import { internalAction } from "./_generated/server"
 import { internal } from "./_generated/api"
 import PDFParser from "pdf2json"
+import type {
+  Output as PdfOutput,
+  Page as PdfPage,
+  Text as PdfText,
+} from "pdf2json"
 import mammoth from "mammoth"
 import { inferDocumentType, type DocumentType } from "./lib/documentTypes"
 import {
@@ -17,7 +22,7 @@ import {
 
 const TARGET_CHUNK_CHARS = 4000
 const CHUNK_OVERLAP_CHARS = 800
-const PARSER_VERSION = "2026-05-25.1"
+const PARSER_VERSION = "2026-05-27.1"
 
 type TextBlock = {
   text: string
@@ -205,15 +210,90 @@ function chunkText(rawText: string): TextChunk[] {
   return chunks.filter((chunk) => chunk.content.length > 0)
 }
 
+function decodePdfTextRun(text: string): string {
+  const normalized = text.replace(/\u00a0/g, " ")
+  if (!normalized.includes("%")) return normalized
+
+  try {
+    return decodeURIComponent(normalized)
+  } catch {
+    return normalized
+  }
+}
+
+function getPdfTextBlockContent(block: PdfText): string {
+  return block.R.map((run) => decodePdfTextRun(run.T)).join("")
+}
+
+function extractTextFromPdfPages(pages: PdfPage[]): string {
+  return pages
+    .map((page) => {
+      const textBlocks = (page.Texts ?? [])
+        .map((block) => ({
+          x: block.x,
+          y: block.y,
+          text: getPdfTextBlockContent(block).trim(),
+        }))
+        .filter((block) => block.text.length > 0)
+
+      textBlocks.sort((a, b) => a.y - b.y || a.x - b.x)
+
+      const lines: { y: number; blocks: typeof textBlocks }[] = []
+      for (const block of textBlocks) {
+        const currentLine = lines[lines.length - 1]
+        if (currentLine && Math.abs(currentLine.y - block.y) <= 0.35) {
+          currentLine.blocks.push(block)
+          currentLine.y = (currentLine.y + block.y) / 2
+        } else {
+          lines.push({ y: block.y, blocks: [block] })
+        }
+      }
+
+      return lines
+        .map((line) =>
+          line.blocks
+            .sort((a, b) => a.x - b.x)
+            .map((block) => block.text)
+            .join(" ")
+        )
+        .join("\n")
+    })
+    .filter((pageText) => pageText.trim().length > 0)
+    .join("\n\n")
+}
+
+function extractTextFromPdfData(pdfData: PdfOutput): string {
+  const structuredText = extractTextFromPdfPages(pdfData.Pages ?? [])
+  return structuredText.trim()
+}
+
+function normalizePdfParserError(err: { parserError: Error } | Error): Error {
+  if (err instanceof Error) return err
+  return err.parserError instanceof Error
+    ? err.parserError
+    : new Error("PDF parsing failed")
+}
+
 function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const parser = new PDFParser()
-    parser.on("pdfParser_dataReady", () => {
-      const text = parser.getRawTextContent()
-      resolve(text)
+    const parsedPages: PdfPage[] = []
+
+    parser.on("data", (page) => {
+      if (page) parsedPages.push(page)
+    })
+    parser.on("pdfParser_dataReady", (pdfData) => {
+      const structuredText = extractTextFromPdfData(pdfData)
+      const rawText = parser.getRawTextContent()
+      resolve(structuredText || rawText)
     })
     parser.on("pdfParser_dataError", (err) => {
-      reject(err instanceof Error ? err : new Error("PDF parsing failed"))
+      const partialText = extractTextFromPdfPages(parsedPages)
+      if (partialText.trim()) {
+        resolve(partialText)
+        return
+      }
+      reject(normalizePdfParserError(err))
     })
     parser.parseBuffer(buffer)
   })

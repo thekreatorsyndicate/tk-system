@@ -1,6 +1,13 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
-import type { Doc } from "./_generated/dataModel"
+import type { Doc, Id } from "./_generated/dataModel"
+import type { QueryCtx } from "./_generated/server"
+import {
+  getOwnedKnowledgeBase,
+  requireAccessibleKnowledgeBase,
+  requireCurrentProfile,
+  requireOwnedKnowledgeBase,
+} from "./lib/authz"
 
 type ModuleNode = Doc<"modules"> & {
   children: ModuleNode[]
@@ -9,6 +16,9 @@ type ModuleNode = Doc<"modules"> & {
 export const list = query({
   args: { knowledgeBaseId: v.id("knowledgeBases") },
   handler: async (ctx, args) => {
+    const result = await getOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
+    if (!result) return []
+
     return await ctx.db
       .query("modules")
       .withIndex("by_knowledgeBaseId", (q) =>
@@ -22,31 +32,49 @@ export const list = query({
 export const getTree = query({
   args: { knowledgeBaseId: v.id("knowledgeBases") },
   handler: async (ctx, args) => {
-    const allModules = await ctx.db
-      .query("modules")
-      .withIndex("by_knowledgeBaseId", (q) =>
-        q.eq("knowledgeBaseId", args.knowledgeBaseId),
-      )
-      .order("asc")
-      .collect()
-
-    const sorted = [...allModules].sort((a, b) => {
-      if (a.order !== b.order) return a.order - b.order
-      return a._creationTime - b._creationTime
-    })
-
-    function childrenOf(parentId: string | undefined): ModuleNode[] {
-      return sorted
-        .filter((m) => m.parentId === parentId)
-        .map((m) => ({
-          ...m,
-          children: childrenOf(m._id),
-        }))
-    }
-
-    return childrenOf(undefined)
+    await requireAccessibleKnowledgeBase(ctx, args.knowledgeBaseId)
+    return await getModuleTree(ctx, args.knowledgeBaseId)
   },
 })
+
+export const getTreeForDashboard = query({
+  args: { knowledgeBaseId: v.id("knowledgeBases") },
+  handler: async (ctx, args) => {
+    const result = await getOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
+    if (!result) return []
+
+    return await getModuleTree(ctx, args.knowledgeBaseId)
+  },
+})
+
+async function getModuleTree(
+  ctx: QueryCtx,
+  knowledgeBaseId: Id<"knowledgeBases">,
+) {
+  const allModules = await ctx.db
+    .query("modules")
+    .withIndex("by_knowledgeBaseId", (q) =>
+      q.eq("knowledgeBaseId", knowledgeBaseId),
+    )
+    .order("asc")
+    .collect()
+
+  const sorted = [...allModules].sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order
+    return a._creationTime - b._creationTime
+  })
+
+  function childrenOf(parentId: string | undefined): ModuleNode[] {
+    return sorted
+      .filter((m) => m.parentId === parentId)
+      .map((m) => ({
+        ...m,
+        children: childrenOf(m._id),
+      }))
+  }
+
+  return childrenOf(undefined)
+}
 
 export const create = mutation({
   args: {
@@ -57,20 +85,11 @@ export const create = mutation({
     order: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
+    const profile = await requireCurrentProfile(ctx)
 
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
-    const kb = await ctx.db.get("knowledgeBases", args.knowledgeBaseId)
-    if (!kb || kb.coachId !== profile._id) throw new Error("Not authorized")
+    await requireOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
 
     let order = args.order
     if (order === undefined) {
@@ -105,15 +124,7 @@ export const update = mutation({
     order: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
+    const profile = await requireCurrentProfile(ctx)
 
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
@@ -136,15 +147,7 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("modules") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
+    const profile = await requireCurrentProfile(ctx)
 
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 

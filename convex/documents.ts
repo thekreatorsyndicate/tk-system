@@ -2,6 +2,11 @@ import { v } from "convex/values"
 import { internalQuery, mutation, query } from "./_generated/server"
 import { internal } from "./_generated/api"
 import { validateDocumentUpload } from "./lib/documentTypes"
+import {
+  getOwnedKnowledgeBase,
+  requireCurrentProfile,
+  requireOwnedKnowledgeBase,
+} from "./lib/authz"
 
 type StorageMetadata = {
   contentType?: string
@@ -11,6 +16,9 @@ type StorageMetadata = {
 export const list = query({
   args: { knowledgeBaseId: v.id("knowledgeBases") },
   handler: async (ctx, args) => {
+    const result = await getOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
+    if (!result) return []
+
     return await ctx.db
       .query("documents")
       .withIndex("by_knowledgeBaseId", (q) =>
@@ -31,20 +39,10 @@ export const generateUploadUrl = mutation({
   handler: async (ctx, args) => {
     validateDocumentUpload(args.filename, args.contentType)
 
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
+    const profile = await requireCurrentProfile(ctx)
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
-    const kb = await ctx.db.get("knowledgeBases", args.knowledgeBaseId)
-    if (!kb || kb.coachId !== profile._id) throw new Error("Not authorized")
+    await requireOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
 
     if (args.moduleId) {
       const courseModule = await ctx.db.get(args.moduleId)
@@ -79,20 +77,10 @@ export const createRecord = mutation({
       metadata.size,
     )
 
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
+    const profile = await requireCurrentProfile(ctx)
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
-    const kb = await ctx.db.get("knowledgeBases", args.knowledgeBaseId)
-    if (!kb || kb.coachId !== profile._id) throw new Error("Not authorized")
+    await requireOwnedKnowledgeBase(ctx, args.knowledgeBaseId)
 
     if (args.moduleId) {
       const courseModule = await ctx.db.get(args.moduleId)
@@ -123,16 +111,7 @@ export const createRecord = mutation({
 export const retryProcessing = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
+    const profile = await requireCurrentProfile(ctx)
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
     const doc = await ctx.db.get(args.id)
@@ -158,23 +137,20 @@ export const retryProcessing = mutation({
 export const get = query({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    return await ctx.db.get("documents", args.id)
+    const doc = await ctx.db.get(args.id)
+    if (!doc) return null
+
+    const result = await getOwnedKnowledgeBase(ctx, doc.knowledgeBaseId)
+    if (!result) return null
+
+    return doc
   },
 })
 
 export const remove = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
+    const profile = await requireCurrentProfile(ctx)
     if (!profile || profile.role !== "coach") throw new Error("Not authorized")
 
     const doc = await ctx.db.get("documents", args.id)

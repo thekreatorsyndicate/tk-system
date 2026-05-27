@@ -1,19 +1,17 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
+import {
+  getAccessibleKnowledgeBase,
+  getCurrentProfile,
+  getOwnedKnowledgeBase,
+  requireCurrentProfile,
+  requireOwnedKnowledgeBase,
+} from "./lib/authz"
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) return []
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
+    const profile = await getCurrentProfile(ctx)
     if (!profile) return []
 
     return await ctx.db
@@ -38,7 +36,15 @@ export const listPublished = query({
 export const get = query({
   args: { id: v.id("knowledgeBases") },
   handler: async (ctx, args) => {
-    return await ctx.db.get("knowledgeBases", args.id)
+    return await getAccessibleKnowledgeBase(ctx, args.id)
+  },
+})
+
+export const getForDashboard = query({
+  args: { id: v.id("knowledgeBases") },
+  handler: async (ctx, args) => {
+    const result = await getOwnedKnowledgeBase(ctx, args.id)
+    return result?.knowledgeBase ?? null
   },
 })
 
@@ -48,17 +54,7 @@ export const create = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
-    if (!profile) throw new Error("Profile not found")
+    const profile = await requireCurrentProfile(ctx)
     if (profile.role !== "coach") throw new Error("Only coaches can create knowledge bases")
 
     const id = await ctx.db.insert("knowledgeBases", {
@@ -80,20 +76,7 @@ export const update = mutation({
     isPublished: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
-    if (!profile) throw new Error("Profile not found")
-
-    const kb = await ctx.db.get("knowledgeBases", args.id)
-    if (!kb || kb.coachId !== profile._id) throw new Error("Not authorized")
+    await requireOwnedKnowledgeBase(ctx, args.id)
 
     const patch: Record<string, string | boolean> = {}
     if (args.title !== undefined) patch.title = args.title
@@ -108,20 +91,7 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("knowledgeBases") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Not authenticated")
-
-    const profile = await ctx.db
-      .query("profiles")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier),
-      )
-      .unique()
-
-    if (!profile) throw new Error("Profile not found")
-
-    const kb = await ctx.db.get("knowledgeBases", args.id)
-    if (!kb || kb.coachId !== profile._id) throw new Error("Not authorized")
+    await requireOwnedKnowledgeBase(ctx, args.id)
 
     const modules = await ctx.db
       .query("modules")
