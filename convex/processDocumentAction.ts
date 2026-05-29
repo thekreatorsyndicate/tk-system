@@ -17,8 +17,10 @@ import {
   generateEmbedding,
   getEmbeddingModel,
   MOCK_EMBEDDING_DIMENSIONS,
+  OPENAI_EMBEDDING_MODEL,
   resolveAiProvider,
 } from "./lib/aiProviders"
+import { normalizeSearchText, SEARCH_VERSION } from "./lib/retrieval"
 
 const TARGET_CHUNK_CHARS = 4000
 const CHUNK_OVERLAP_CHARS = 800
@@ -386,6 +388,13 @@ export const processDocument = internalAction({
       let embeddingModel = getEmbeddingModel(provider)
       let embeddingDimensions =
         provider === "mock" ? MOCK_EMBEDDING_DIMENSIONS : 0
+      const moduleMetadata = await ctx.runQuery(
+        internal.processDocument.getModuleMetadata,
+        {
+          knowledgeBaseId: doc.knowledgeBaseId,
+          moduleId: doc.moduleId,
+        }
+      )
 
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
         const chunk = chunks[chunkIndex]
@@ -398,6 +407,21 @@ export const processDocument = internalAction({
         })
         embeddingModel = generated.embeddingModel
         embeddingDimensions = generated.embedding.length
+        const searchText = normalizeSearchText(
+          [
+            doc.filename,
+            moduleMetadata.modulePathText,
+            chunk.headingPath?.join(" "),
+            chunk.content,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        )
+        const embeddingOpenAi1536 =
+          embeddingModel === OPENAI_EMBEDDING_MODEL &&
+          generated.embedding.length === 1536
+            ? generated.embedding
+            : undefined
 
         await ctx.runMutation(internal.processDocument.storeChunk, {
           documentId: args.documentId,
@@ -412,6 +436,13 @@ export const processDocument = internalAction({
           parserVersion: PARSER_VERSION,
           embeddingModel,
           embeddingDimensions,
+          searchText,
+          searchVersion: SEARCH_VERSION,
+          embeddingOpenAi1536,
+          modulePath: moduleMetadata.modulePath,
+          modulePathText: moduleMetadata.modulePathText,
+          scopeIds: moduleMetadata.scopeIds,
+          documentTitle: doc.filename,
           headingPath: chunk.headingPath,
         })
       }

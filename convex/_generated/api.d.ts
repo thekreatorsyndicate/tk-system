@@ -17,6 +17,7 @@ import type * as knowledgeBases from "../knowledgeBases.js";
 import type * as lib_aiProviders from "../lib/aiProviders.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_documentTypes from "../lib/documentTypes.js";
+import type * as lib_retrieval from "../lib/retrieval.js";
 import type * as modules from "../modules.js";
 import type * as processDocument from "../processDocument.js";
 import type * as processDocumentAction from "../processDocumentAction.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiProviders": typeof lib_aiProviders;
   "lib/authz": typeof lib_authz;
   "lib/documentTypes": typeof lib_documentTypes;
+  "lib/retrieval": typeof lib_retrieval;
   modules: typeof modules;
   processDocument: typeof processDocument;
   processDocumentAction: typeof processDocumentAction;

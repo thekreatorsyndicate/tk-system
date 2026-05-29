@@ -10,12 +10,22 @@ import {
   generateMockEmbedding,
   getEmbeddingModel,
   MOCK_EMBEDDING_MODEL,
+  OPENAI_EMBEDDING_MODEL,
   resolveAiProvider,
 } from "./lib/aiProviders"
 import {
   getAccessibleKnowledgeBase,
   requireAccessibleKnowledgeBase,
 } from "./lib/authz"
+import {
+  fuzzyTermScore,
+  lexicalTermScore,
+  parseExpandedSearchQuery,
+  parseSearchQuery,
+  shouldExpandQuery,
+  type ExpandedSearchQuery,
+  type ParsedSearchQuery,
+} from "./lib/retrieval"
 
 type ChatSource = {
   sourceNumber: number
@@ -38,6 +48,11 @@ type CandidateChunk = {
   embedding: number[]
   embeddingModel?: string
   embeddingDimensions?: number
+  searchText?: string
+  searchVersion?: string
+  embeddingOpenAi1536?: number[]
+  documentTitle?: string
+  modulePathText?: string
   chunkIndex?: number
   headingPath?: string[]
   modulePath?: string[]
@@ -50,6 +65,9 @@ type RankedChunk = {
   score: number
   vectorScore: number
   lexicalScore: number
+  fuzzyScore: number
+  fullTextScore: number
+  expansionPenalty: number
   scopePriority: number
 }
 
@@ -82,6 +100,8 @@ const MAX_CONTEXT_CHUNKS = 12
 const ADJACENT_CHUNK_WINDOW = 1
 const SIMILARITY_THRESHOLD = 0.5
 const MOCK_SIMILARITY_THRESHOLD = 0.2
+const SEARCH_CANDIDATE_LIMIT = 32
+const VECTOR_CANDIDATE_LIMIT = 48
 
 function buildSystemPrompt(kbTitle: string): string {
   return `You are an AI tutor for the course "${kbTitle}".
@@ -97,49 +117,10 @@ Rules:
 6. Refer to module/submodule names when identifying where information came from.
 7. Do not mention filenames, document IDs, chunk IDs, embeddings, or retrieval internals.
 8. If the excerpts do not support an answer, say: "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
-9. Prefer a concise teaching structure: direct answer first, explanation next, and key takeaways if useful.
-10. Never invent missing facts.`
-}
-
-function tokenize(text: string): string[] {
-  const stopWords = new Set([
-    "the",
-    "and",
-    "for",
-    "with",
-    "that",
-    "this",
-    "what",
-    "how",
-    "why",
-    "when",
-    "where",
-    "about",
-    "from",
-    "into",
-    "your",
-    "you",
-    "are",
-    "can",
-  ])
-
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 2 && !stopWords.has(word))
-}
-
-function lexicalScore(query: string, content: string): number {
-  const queryTerms = new Set(tokenize(query))
-  if (queryTerms.size === 0) return 0
-
-  const contentTerms = new Set(tokenize(content))
-  let matches = 0
-  for (const term of queryTerms) {
-    if (contentTerms.has(term)) matches++
-  }
-  return matches / queryTerms.size
+9. If the retrieved excerpts answer the student's question indirectly, explain the connection clearly. Say that the answer is based only on the available course material.
+10. Do not present indirect inferences as if the course explicitly stated them.
+11. Prefer a concise teaching structure: direct answer first, explanation next, and key takeaways if useful.
+12. Never invent missing facts.`
 }
 
 function buildMockReply(
@@ -218,12 +199,12 @@ function pickDirectMatches(
 
 function expandWithAdjacentChunks(args: {
   selected: RankedChunk[]
-  allChunks: CandidateChunk[]
+  adjacentChunks: CandidateChunk[]
   window: number
   maxChunks: number
 }): ContextChunk[] {
   const byDocumentAndIndex = new Map<string, CandidateChunk>()
-  for (const chunk of args.allChunks) {
+  for (const chunk of args.adjacentChunks) {
     if (typeof chunk.chunkIndex !== "number") continue
     byDocumentAndIndex.set(`${chunk.documentId}:${chunk.chunkIndex}`, chunk)
   }
@@ -308,6 +289,7 @@ ${context}
 
 Now answer the following question based ONLY on the excerpts above. Cite source numbers inline and use module/submodule names when helpful. Do not use external knowledge.
 Only cite a source number if that source directly supports the sentence or paragraph where the citation appears.
+If the excerpts answer the question indirectly, explain the connection and state that the answer is based only on the available course material.
 
 ${question}`
 }
@@ -365,6 +347,300 @@ function buildSources(
       sourceKind: contextChunk.sourceKind,
     }
   })
+}
+
+function getRetrievalSearchQueries(
+  question: string,
+  parsedQuery: ParsedSearchQuery,
+  expandedQuery?: ExpandedSearchQuery
+): string[] {
+  const queries = [
+    question,
+    parsedQuery.normalized,
+    ...parsedQuery.phrases,
+    ...(expandedQuery?.searchQueries ?? []),
+    ...(expandedQuery?.adjacentConcepts ?? []),
+  ]
+
+  return Array.from(
+    new Set(queries.map((query) => query.trim()).filter(Boolean))
+  ).slice(0, 8)
+}
+
+function getRetrievalTerms(
+  parsedQuery: ParsedSearchQuery,
+  expandedQuery?: ExpandedSearchQuery
+): string[] {
+  const expandedTerms = expandedQuery
+    ? parseSearchQuery(
+        [
+          expandedQuery.canonicalQuestion,
+          ...expandedQuery.searchQueries,
+          ...expandedQuery.adjacentConcepts,
+        ].join(" ")
+      ).terms
+    : []
+
+  return Array.from(new Set([...parsedQuery.terms, ...expandedTerms]))
+}
+
+async function getTextSearchChunkIds(
+  ctx: any,
+  knowledgeBaseId: Id<"knowledgeBases">,
+  queries: string[]
+): Promise<Set<string>> {
+  const ids = new Set<string>()
+
+  for (const query of queries) {
+    try {
+      const chunks: CandidateChunk[] = await ctx.runQuery(
+        internal.chatInternal.searchChunksByText,
+        {
+          knowledgeBaseId,
+          query,
+          limit: SEARCH_CANDIDATE_LIMIT,
+        }
+      )
+      for (const chunk of chunks) {
+        ids.add(chunk._id)
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown text search error"
+      console.warn(`Text search failed, using fallback scoring: ${message}`)
+      return ids
+    }
+  }
+
+  return ids
+}
+
+async function getVectorSearchChunkIds(args: {
+  ctx: any
+  knowledgeBaseId: Id<"knowledgeBases">
+  queryEmbedding: number[]
+  queryEmbeddingModel: string
+  useMockAi: boolean
+}): Promise<Set<string>> {
+  const ids = new Set<string>()
+
+  if (
+    args.useMockAi ||
+    args.queryEmbeddingModel !== OPENAI_EMBEDDING_MODEL ||
+    args.queryEmbedding.length !== 1536
+  ) {
+    return ids
+  }
+
+  try {
+    const results = await args.ctx.vectorSearch(
+      "documentChunks",
+      "by_embeddingOpenAi1536",
+      {
+        vector: args.queryEmbedding,
+        limit: VECTOR_CANDIDATE_LIMIT,
+        filter: (q: any) => q.eq("knowledgeBaseId", args.knowledgeBaseId),
+      }
+    )
+
+    for (const result of results) {
+      ids.add(result._id)
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown vector search error"
+    console.warn(`Vector search failed, using fallback scoring: ${message}`)
+  }
+
+  return ids
+}
+
+async function rankRetrievalPass(args: {
+  ctx: any
+  question: string
+  parsedQuery: ParsedSearchQuery
+  expandedQuery?: ExpandedSearchQuery
+  knowledgeBaseId: Id<"knowledgeBases">
+  pinnedModuleId?: Id<"modules">
+  queryEmbedding: number[]
+  queryEmbeddingModel: string
+  useMockAi: boolean
+  expansionPenalty: number
+}): Promise<{
+  ranked: RankedChunk[]
+  compatibleCount: number
+  candidateCount: number
+  usedFallbackScan: boolean
+}> {
+  const searchQueries = getRetrievalSearchQueries(
+    args.question,
+    args.parsedQuery,
+    args.expandedQuery
+  )
+  const queryTerms = getRetrievalTerms(args.parsedQuery, args.expandedQuery)
+  const textSearchIds = await getTextSearchChunkIds(
+    args.ctx,
+    args.knowledgeBaseId,
+    searchQueries
+  )
+  const vectorSearchIds = await getVectorSearchChunkIds({
+    ctx: args.ctx,
+    knowledgeBaseId: args.knowledgeBaseId,
+    queryEmbedding: args.queryEmbedding,
+    queryEmbeddingModel: args.queryEmbeddingModel,
+    useMockAi: args.useMockAi,
+  })
+
+  const indexedIds = Array.from(new Set([...textSearchIds, ...vectorSearchIds]))
+  let usedFallbackScan = false
+  let candidatePool: CandidateChunk[] = []
+
+  if (indexedIds.length > 0 && !args.useMockAi) {
+    candidatePool = await args.ctx.runQuery(
+      internal.chatInternal.getReadyChunkContextByIds,
+      {
+        knowledgeBaseId: args.knowledgeBaseId,
+        pinnedModuleId: args.pinnedModuleId,
+        ids: indexedIds,
+      }
+    )
+  } else {
+    usedFallbackScan = true
+    candidatePool = await args.ctx.runQuery(
+      internal.chatInternal.getCandidateChunks,
+      {
+        knowledgeBaseId: args.knowledgeBaseId,
+        pinnedModuleId: args.pinnedModuleId,
+      }
+    )
+  }
+
+  const compatiblePool = candidatePool.filter(
+    (chunk) =>
+      chunk.embeddingModel === args.queryEmbeddingModel &&
+      chunk.embeddingDimensions === args.queryEmbedding.length
+  )
+
+  const scored = compatiblePool.map((chunk) => {
+    const semanticScore = Math.max(
+      0,
+      cosineSimilarity(args.queryEmbedding, chunk.embedding)
+    )
+    const contentForText = [
+      chunk.modulePath?.join(" "),
+      chunk.modulePathText,
+      chunk.documentTitle,
+      chunk.headingPath?.join(" "),
+      chunk.searchText,
+      chunk.content,
+    ]
+      .filter(Boolean)
+      .join(" ")
+    const lexicalScoreValue = Math.max(
+      lexicalTermScore(queryTerms, contentForText),
+      textSearchIds.has(chunk._id) ? 0.8 : 0
+    )
+    const fuzzyScoreValue = fuzzyTermScore(queryTerms, contentForText)
+    const scopePriority = getScopePriority(chunk, args.pinnedModuleId)
+    const scopeBoost = args.pinnedModuleId ? 1 / (scopePriority + 1) : 0
+
+    const score = args.useMockAi
+      ? 0.45 * lexicalScoreValue + 0.35 * fuzzyScoreValue + 0.2 * scopeBoost
+      : args.expansionPenalty > 0
+        ? 0.5 * semanticScore +
+          0.25 * lexicalScoreValue +
+          0.15 * fuzzyScoreValue +
+          0.05 * scopeBoost -
+          0.05 * args.expansionPenalty
+        : 0.55 * semanticScore +
+          0.25 * lexicalScoreValue +
+          0.15 * fuzzyScoreValue +
+          0.05 * scopeBoost
+
+    return {
+      chunk,
+      score,
+      vectorScore: semanticScore,
+      lexicalScore: lexicalScoreValue,
+      fullTextScore: lexicalScoreValue,
+      fuzzyScore: fuzzyScoreValue,
+      expansionPenalty: args.expansionPenalty,
+      scopePriority,
+    }
+  })
+
+  return {
+    ranked: scored.sort(
+      (a, b) => a.scopePriority - b.scopePriority || b.score - a.score
+    ),
+    compatibleCount: compatiblePool.length,
+    candidateCount: candidatePool.length,
+    usedFallbackScan,
+  }
+}
+
+function mergeRankedChunks(first: RankedChunk[], second: RankedChunk[]) {
+  const byChunkId = new Map<string, RankedChunk>()
+  for (const ranked of [...first, ...second]) {
+    const existing = byChunkId.get(ranked.chunk._id)
+    if (!existing || ranked.score > existing.score) {
+      byChunkId.set(ranked.chunk._id, ranked)
+    }
+  }
+
+  return Array.from(byChunkId.values()).sort(
+    (a, b) => a.scopePriority - b.scopePriority || b.score - a.score
+  )
+}
+
+function buildQueryExpansionMessages(question: string) {
+  return [
+    {
+      role: "system" as const,
+      content: `You rewrite student questions into search queries for course material retrieval.
+
+Return only JSON.
+
+Given the student's question, produce:
+- canonicalQuestion: a clearer version of the question
+- searchQueries: 2 to 4 short search queries
+- adjacentConcepts: concepts that could answer the question indirectly
+- mustNotAssume: facts that are not stated by the user
+
+Rules:
+1. Do not answer the question.
+2. Do not invent course-specific facts.
+3. Prefer concepts likely to appear in educational material.
+4. Keep each search query under 12 words.
+5. If the question is already specific, keep rewrites close to the original.`,
+    },
+    {
+      role: "user" as const,
+      content: question,
+    },
+  ]
+}
+
+async function expandRetrievalQuery(args: {
+  question: string
+  provider: "openai" | "gemini"
+  openAiApiKey?: string
+  geminiApiKey?: string
+}): Promise<ExpandedSearchQuery | null> {
+  try {
+    const raw = await generateChatReply({
+      provider: args.provider,
+      messages: buildQueryExpansionMessages(args.question),
+      openAiApiKey: args.openAiApiKey,
+      geminiApiKey: args.geminiApiKey,
+    })
+    return parseExpandedSearchQuery(raw)
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown query expansion error"
+    console.warn(`Query expansion failed, using first-pass retrieval: ${message}`)
+    return null
+  }
 }
 
 // ── Public mutations ──
@@ -663,15 +939,20 @@ export const sendMessage = action({
       }
     }
 
-    const allCandidateChunks: CandidateChunk[] = await ctx.runQuery(
-      internal.chatInternal.getCandidateChunks,
-      {
-        knowledgeBaseId: conversation.knowledgeBaseId,
-        pinnedModuleId: conversation.pinnedModuleId,
-      }
-    )
+    const parsedQuery = parseSearchQuery(args.content)
+    const firstPass = await rankRetrievalPass({
+      ctx,
+      question: args.content,
+      parsedQuery,
+      knowledgeBaseId: conversation.knowledgeBaseId,
+      pinnedModuleId: conversation.pinnedModuleId,
+      queryEmbedding,
+      queryEmbeddingModel,
+      useMockAi,
+      expansionPenalty: 0,
+    })
 
-    if (allCandidateChunks.length === 0) {
+    if (firstPass.candidateCount === 0) {
       const notReady =
         "The course material is not ready yet. Please ask again after the uploaded documents finish processing."
 
@@ -684,29 +965,47 @@ export const sendMessage = action({
       return { content: notReady, sources: [] }
     }
 
-    const compatibleChunks = allCandidateChunks.filter(
-      (chunk) =>
-        chunk.embeddingModel === queryEmbeddingModel &&
-        chunk.embeddingDimensions === queryEmbedding.length
-    )
+    let ranked = firstPass.ranked
+    let directMatches = pickDirectMatches(ranked, useMockAi)
+    const topRanked = ranked[0]
+    const shouldRunExpansion =
+      !useMockAi &&
+      shouldExpandQuery({
+        directMatchesCount: directMatches.length,
+        topScore: topRanked?.score ?? 0,
+        topSemanticScore: topRanked?.vectorScore ?? 0,
+        topLexicalScore: topRanked?.lexicalScore ?? 0,
+      })
 
-    const scored: RankedChunk[] = compatibleChunks.map((chunk) => {
-      const vectorScore = cosineSimilarity(queryEmbedding, chunk.embedding)
-      const textScore = lexicalScore(args.content, chunk.content)
-      return {
-        chunk,
-        score: useMockAi ? textScore : 0.8 * vectorScore + 0.2 * textScore,
-        vectorScore,
-        lexicalScore: textScore,
-        scopePriority: getScopePriority(chunk, conversation.pinnedModuleId),
+    if (shouldRunExpansion && (provider === "openai" || provider === "gemini")) {
+      const expandedQuery = await expandRetrievalQuery({
+        question: args.content,
+        provider,
+        openAiApiKey,
+        geminiApiKey,
+      })
+
+      if (expandedQuery) {
+        const expandedPass = await rankRetrievalPass({
+          ctx,
+          question: args.content,
+          parsedQuery,
+          expandedQuery,
+          knowledgeBaseId: conversation.knowledgeBaseId,
+          pinnedModuleId: conversation.pinnedModuleId,
+          queryEmbedding,
+          queryEmbeddingModel,
+          useMockAi,
+          expansionPenalty: 1,
+        })
+        ranked = mergeRankedChunks(firstPass.ranked, expandedPass.ranked)
+        directMatches = pickDirectMatches(ranked, useMockAi)
       }
-    })
-
-    const directMatches = pickDirectMatches(scored, useMockAi)
+    }
 
     if (directMatches.length === 0) {
       const refusal: string =
-        compatibleChunks.length === 0
+        firstPass.compatibleCount === 0
           ? `I can't access compatible course material for "${kb.title}" yet. Please reprocess the uploaded documents for the selected AI provider, then ask again.`
           : "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
 
@@ -719,9 +1018,30 @@ export const sendMessage = action({
       return { content: refusal, sources: [] }
     }
 
+    const adjacentMatches = directMatches.flatMap((match) =>
+      typeof match.chunk.chunkIndex === "number"
+        ? [
+            {
+              documentId: match.chunk.documentId,
+              chunkIndex: match.chunk.chunkIndex,
+            },
+          ]
+        : []
+    )
+    const adjacentChunks: CandidateChunk[] = await ctx.runQuery(
+      internal.chatInternal.getAdjacentChunksForMatches,
+      {
+        knowledgeBaseId: conversation.knowledgeBaseId,
+        pinnedModuleId: conversation.pinnedModuleId,
+        queryEmbeddingModel,
+        queryEmbeddingDimensions: queryEmbedding.length,
+        matches: adjacentMatches,
+      }
+    )
+
     const contextChunks = expandWithAdjacentChunks({
       selected: directMatches,
-      allChunks: compatibleChunks,
+      adjacentChunks,
       window: ADJACENT_CHUNK_WINDOW,
       maxChunks: MAX_CONTEXT_CHUNKS,
     })

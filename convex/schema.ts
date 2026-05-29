@@ -74,6 +74,13 @@ export default defineSchema({
     parserVersion: v.optional(v.string()),
     embeddingModel: v.optional(v.string()),
     embeddingDimensions: v.optional(v.number()),
+    searchText: v.optional(v.string()),
+    searchVersion: v.optional(v.string()),
+    embeddingOpenAi1536: v.optional(v.array(v.float64())),
+    modulePath: v.optional(v.array(v.string())),
+    modulePathText: v.optional(v.string()),
+    scopeIds: v.optional(v.array(v.string())),
+    documentTitle: v.optional(v.string()),
     headingPath: v.optional(v.array(v.string())),
     pageStart: v.optional(v.number()),
     pageEnd: v.optional(v.number()),
@@ -82,7 +89,16 @@ export default defineSchema({
     .index("by_documentId_and_chunkIndex", ["documentId", "chunkIndex"])
     .index("by_knowledgeBaseId", ["knowledgeBaseId"])
     .index("by_knowledgeBaseId_and_moduleId", ["knowledgeBaseId", "moduleId"])
-    .index("by_moduleId", ["moduleId"]),
+    .index("by_moduleId", ["moduleId"])
+    .searchIndex("by_searchText", {
+      searchField: "searchText",
+      filterFields: ["knowledgeBaseId"],
+    })
+    .vectorIndex("by_embeddingOpenAi1536", {
+      vectorField: "embeddingOpenAi1536",
+      dimensions: 1536,
+      filterFields: ["knowledgeBaseId", "embeddingModel"],
+    }),
 
   conversations: defineTable({
     knowledgeBaseId: v.id("knowledgeBases"),
