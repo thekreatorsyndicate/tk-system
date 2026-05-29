@@ -20,6 +20,15 @@ export type RetrievalConfidenceSummary = {
   topLexicalScore: number
 }
 
+export type SupportKind = "direct" | "indirect" | "background" | "irrelevant"
+
+export type RerankedSearchResult = {
+  chunkId: string
+  relevanceScore: number
+  supportKind: SupportKind
+  reason?: string
+}
+
 const STOP_WORDS = new Set([
   "the",
   "and",
@@ -167,6 +176,41 @@ export function parseExpandedSearchQuery(raw: string): ExpandedSearchQuery | nul
   }
 }
 
+export function parseRerankedSearchResults(
+  raw: string
+): RerankedSearchResult[] {
+  const jsonText = extractJsonObject(raw)
+  if (!jsonText) return []
+
+  try {
+    const parsed = JSON.parse(jsonText) as {
+      results?: Array<Partial<RerankedSearchResult>>
+    }
+    if (!Array.isArray(parsed.results)) return []
+
+    return parsed.results.flatMap((result) => {
+      if (typeof result.chunkId !== "string") return []
+      const supportKind = normalizeSupportKind(result.supportKind)
+      const relevanceScore =
+        typeof result.relevanceScore === "number"
+          ? Math.min(Math.max(result.relevanceScore, 0), 1)
+          : 0
+
+      return {
+        chunkId: result.chunkId,
+        relevanceScore,
+        supportKind,
+        reason:
+          typeof result.reason === "string"
+            ? result.reason.trim().slice(0, 220)
+            : undefined,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value
@@ -179,6 +223,19 @@ function extractJsonObject(raw: string): string | null {
   const end = raw.lastIndexOf("}")
   if (start === -1 || end === -1 || end <= start) return null
   return raw.slice(start, end + 1)
+}
+
+function normalizeSupportKind(value: unknown): SupportKind {
+  if (
+    value === "direct" ||
+    value === "indirect" ||
+    value === "background" ||
+    value === "irrelevant"
+  ) {
+    return value
+  }
+
+  return "background"
 }
 
 function stemTerm(term: string): string {

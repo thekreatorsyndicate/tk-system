@@ -329,6 +329,15 @@ export const insertMessage = internalMutation({
           documentFilename: v.optional(v.string()),
           content: v.string(),
           score: v.number(),
+          supportKind: v.optional(
+            v.union(
+              v.literal("direct"),
+              v.literal("indirect"),
+              v.literal("background"),
+              v.literal("irrelevant")
+            )
+          ),
+          supportReason: v.optional(v.string()),
           sourceKind: v.optional(
             v.union(v.literal("direct"), v.literal("adjacent"))
           ),

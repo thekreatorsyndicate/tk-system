@@ -21,10 +21,12 @@ import {
   fuzzyTermScore,
   lexicalTermScore,
   parseExpandedSearchQuery,
+  parseRerankedSearchResults,
   parseSearchQuery,
   shouldExpandQuery,
   type ExpandedSearchQuery,
   type ParsedSearchQuery,
+  type SupportKind,
 } from "./lib/retrieval"
 
 type ChatSource = {
@@ -36,6 +38,8 @@ type ChatSource = {
   headingPath?: string[]
   content: string
   score: number
+  supportKind?: SupportKind
+  supportReason?: string
   sourceKind: "direct" | "adjacent"
 }
 
@@ -69,6 +73,14 @@ type RankedChunk = {
   fullTextScore: number
   expansionPenalty: number
   scopePriority: number
+  supportKind: SupportKind
+  supportReason?: string
+}
+
+type QueryEmbedding = {
+  embedding: number[]
+  embeddingModel: string
+  weight: number
 }
 
 type ContextChunk = {
@@ -76,6 +88,8 @@ type ContextChunk = {
   score: number
   sourceNumber: number
   sourceKind: "direct" | "adjacent"
+  supportKind: SupportKind
+  supportReason?: string
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -102,6 +116,8 @@ const SIMILARITY_THRESHOLD = 0.5
 const MOCK_SIMILARITY_THRESHOLD = 0.2
 const SEARCH_CANDIDATE_LIMIT = 32
 const VECTOR_CANDIDATE_LIMIT = 48
+const RERANK_CANDIDATE_LIMIT = 20
+const MIN_ANSWERABLE_SCORE = 0.5
 
 function buildSystemPrompt(kbTitle: string): string {
   return `You are an AI tutor for the course "${kbTitle}".
@@ -225,6 +241,9 @@ function expandWithAdjacentChunks(args: {
       score: ranked.score,
       sourceNumber,
       sourceKind,
+      supportKind:
+        sourceKind === "adjacent" ? "background" : ranked.supportKind,
+      supportReason: ranked.supportReason,
     })
   }
 
@@ -274,10 +293,10 @@ function buildContextMessage(contextChunks: ContextChunk[], question: string) {
         contextChunk.sourceKind === "adjacent"
           ? "surrounding context"
           : "direct match"
-
       return `${sourceLabel}
 Module: ${getModuleLabel(contextChunk.chunk)}
 Type: ${sourceType}
+Support: ${getSupportLabel(contextChunk)}
 Excerpt:
 ${contextChunk.chunk.content}`
     })
@@ -292,6 +311,12 @@ Only cite a source number if that source directly supports the sentence or parag
 If the excerpts answer the question indirectly, explain the connection and state that the answer is based only on the available course material.
 
 ${question}`
+}
+
+function getSupportLabel(contextChunk: ContextChunk): string {
+  return contextChunk.supportReason
+    ? `${contextChunk.supportKind} (${contextChunk.supportReason})`
+    : contextChunk.supportKind
 }
 
 function extractCitedSourceNumbers(reply: string): Set<number> {
@@ -344,6 +369,8 @@ function buildSources(
       headingPath: contextChunk.chunk.headingPath,
       content: contextChunk.chunk.content.slice(0, 260),
       score: contextChunk.score,
+      supportKind: contextChunk.supportKind,
+      supportReason: contextChunk.supportReason,
       sourceKind: contextChunk.sourceKind,
     }
   })
@@ -418,41 +445,61 @@ async function getTextSearchChunkIds(
 async function getVectorSearchChunkIds(args: {
   ctx: any
   knowledgeBaseId: Id<"knowledgeBases">
-  queryEmbedding: number[]
-  queryEmbeddingModel: string
+  queryEmbeddings: QueryEmbedding[]
   useMockAi: boolean
 }): Promise<Set<string>> {
   const ids = new Set<string>()
 
-  if (
-    args.useMockAi ||
-    args.queryEmbeddingModel !== OPENAI_EMBEDDING_MODEL ||
-    args.queryEmbedding.length !== 1536
-  ) {
+  if (args.useMockAi) {
     return ids
   }
 
-  try {
-    const results = await args.ctx.vectorSearch(
-      "documentChunks",
-      "by_embeddingOpenAi1536",
-      {
-        vector: args.queryEmbedding,
-        limit: VECTOR_CANDIDATE_LIMIT,
-        filter: (q: any) => q.eq("knowledgeBaseId", args.knowledgeBaseId),
-      }
-    )
-
-    for (const result of results) {
-      ids.add(result._id)
+  for (const queryEmbedding of args.queryEmbeddings) {
+    if (
+      queryEmbedding.embeddingModel !== OPENAI_EMBEDDING_MODEL ||
+      queryEmbedding.embedding.length !== 1536
+    ) {
+      continue
     }
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown vector search error"
-    console.warn(`Vector search failed, using fallback scoring: ${message}`)
+
+    try {
+      const results = await args.ctx.vectorSearch(
+        "documentChunks",
+        "by_embeddingOpenAi1536",
+        {
+          vector: queryEmbedding.embedding,
+          limit: VECTOR_CANDIDATE_LIMIT,
+          filter: (q: any) => q.eq("knowledgeBaseId", args.knowledgeBaseId),
+        }
+      )
+
+      for (const result of results) {
+        ids.add(result._id)
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown vector search error"
+      console.warn(`Vector search failed, using fallback scoring: ${message}`)
+    }
   }
 
   return ids
+}
+
+function getBestSemanticScore(
+  queryEmbeddings: QueryEmbedding[],
+  chunkEmbedding: number[]
+): number {
+  let bestScore = 0
+  for (const queryEmbedding of queryEmbeddings) {
+    if (queryEmbedding.embedding.length !== chunkEmbedding.length) continue
+    bestScore = Math.max(
+      bestScore,
+      Math.max(0, cosineSimilarity(queryEmbedding.embedding, chunkEmbedding)) *
+        queryEmbedding.weight
+    )
+  }
+  return bestScore
 }
 
 async function rankRetrievalPass(args: {
@@ -462,8 +509,7 @@ async function rankRetrievalPass(args: {
   expandedQuery?: ExpandedSearchQuery
   knowledgeBaseId: Id<"knowledgeBases">
   pinnedModuleId?: Id<"modules">
-  queryEmbedding: number[]
-  queryEmbeddingModel: string
+  queryEmbeddings: QueryEmbedding[]
   useMockAi: boolean
   expansionPenalty: number
 }): Promise<{
@@ -486,10 +532,10 @@ async function rankRetrievalPass(args: {
   const vectorSearchIds = await getVectorSearchChunkIds({
     ctx: args.ctx,
     knowledgeBaseId: args.knowledgeBaseId,
-    queryEmbedding: args.queryEmbedding,
-    queryEmbeddingModel: args.queryEmbeddingModel,
+    queryEmbeddings: args.queryEmbeddings,
     useMockAi: args.useMockAi,
   })
+  const primaryQueryEmbedding = args.queryEmbeddings[0]
 
   const indexedIds = Array.from(new Set([...textSearchIds, ...vectorSearchIds]))
   let usedFallbackScan = false
@@ -517,14 +563,14 @@ async function rankRetrievalPass(args: {
 
   const compatiblePool = candidatePool.filter(
     (chunk) =>
-      chunk.embeddingModel === args.queryEmbeddingModel &&
-      chunk.embeddingDimensions === args.queryEmbedding.length
+      chunk.embeddingModel === primaryQueryEmbedding.embeddingModel &&
+      chunk.embeddingDimensions === primaryQueryEmbedding.embedding.length
   )
 
   const scored = compatiblePool.map((chunk) => {
-    const semanticScore = Math.max(
-      0,
-      cosineSimilarity(args.queryEmbedding, chunk.embedding)
+    const semanticScore = getBestSemanticScore(
+      args.queryEmbeddings,
+      chunk.embedding
     )
     const contentForText = [
       chunk.modulePath?.join(" "),
@@ -557,6 +603,9 @@ async function rankRetrievalPass(args: {
           0.15 * fuzzyScoreValue +
           0.05 * scopeBoost
 
+    const supportKind: SupportKind =
+      score >= 0.7 || lexicalScoreValue >= 0.8 ? "direct" : "indirect"
+
     return {
       chunk,
       score,
@@ -566,6 +615,7 @@ async function rankRetrievalPass(args: {
       fuzzyScore: fuzzyScoreValue,
       expansionPenalty: args.expansionPenalty,
       scopePriority,
+      supportKind,
     }
   })
 
@@ -641,6 +691,170 @@ async function expandRetrievalQuery(args: {
     console.warn(`Query expansion failed, using first-pass retrieval: ${message}`)
     return null
   }
+}
+
+async function generateExpandedQueryEmbeddings(args: {
+  expandedQuery: ExpandedSearchQuery
+  provider: "openai" | "gemini"
+  expectedEmbeddingModel: string
+  expectedDimensions: number
+  openAiApiKey?: string
+  geminiApiKey?: string
+}): Promise<QueryEmbedding[]> {
+  const queryTexts = Array.from(
+    new Set([
+      args.expandedQuery.canonicalQuestion,
+      ...args.expandedQuery.searchQueries,
+    ].filter(Boolean))
+  ).slice(0, 4)
+  const embeddings: QueryEmbedding[] = []
+
+  for (const text of queryTexts) {
+    try {
+      const generated = await generateEmbedding({
+        text,
+        provider: args.provider,
+        task: "query",
+        openAiApiKey: args.openAiApiKey,
+        geminiApiKey: args.geminiApiKey,
+      })
+
+      if (
+        generated.embeddingModel !== args.expectedEmbeddingModel ||
+        generated.embedding.length !== args.expectedDimensions
+      ) {
+        continue
+      }
+
+      embeddings.push({
+        embedding: generated.embedding,
+        embeddingModel: generated.embeddingModel,
+        weight: 0.94,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown embedding error"
+      console.warn(`Expanded query embedding failed: ${message}`)
+    }
+  }
+
+  return embeddings
+}
+
+function shouldRerank(args: {
+  ranked: RankedChunk[]
+  expansionWasUsed: boolean
+  useMockAi: boolean
+}): boolean {
+  if (args.useMockAi || args.ranked.length < 2) return false
+  if (args.expansionWasUsed) return true
+  const [first, second] = args.ranked
+  if ((first?.score ?? 0) < 0.72) return true
+  return first.score - second.score < 0.08
+}
+
+function buildRerankerMessages(question: string, candidates: RankedChunk[]) {
+  const candidateText = candidates
+    .map((candidate, index) => {
+      const excerpt = candidate.chunk.content.replace(/\s+/g, " ").slice(0, 900)
+      return `Candidate ${index + 1}
+chunkId: ${candidate.chunk._id}
+module: ${getModuleLabel(candidate.chunk)}
+retrievalScore: ${candidate.score.toFixed(3)}
+excerpt: ${excerpt}`
+    })
+    .join("\n\n")
+
+  return [
+    {
+      role: "system" as const,
+      content: `You rerank retrieved course excerpts for answering a student question.
+
+Return only JSON with this shape:
+{"results":[{"chunkId":"...","relevanceScore":0.0,"supportKind":"direct|indirect|background|irrelevant","reason":"short"}]}
+
+Rules:
+1. Do not answer the question.
+2. Mark direct only when the excerpt itself supports an answer.
+3. Mark indirect when the excerpt explains a mechanism or prerequisite that can answer by inference.
+4. Mark background for weak context and irrelevant for unrelated excerpts.
+5. Keep reasons under 20 words.`,
+    },
+    {
+      role: "user" as const,
+      content: `Question: ${question}
+
+Candidates:
+${candidateText}`,
+    },
+  ]
+}
+
+async function rerankTopChunks(args: {
+  question: string
+  ranked: RankedChunk[]
+  provider: "openai" | "gemini"
+  openAiApiKey?: string
+  geminiApiKey?: string
+}): Promise<RankedChunk[]> {
+  const topCandidates = args.ranked.slice(0, RERANK_CANDIDATE_LIMIT)
+  if (topCandidates.length === 0) return args.ranked
+
+  try {
+    const raw = await generateChatReply({
+      provider: args.provider,
+      messages: buildRerankerMessages(args.question, topCandidates),
+      openAiApiKey: args.openAiApiKey,
+      geminiApiKey: args.geminiApiKey,
+    })
+    const reranked = parseRerankedSearchResults(raw)
+    const byChunkId = new Map(reranked.map((item) => [item.chunkId, item]))
+    if (byChunkId.size === 0) return args.ranked
+
+    const adjusted = args.ranked.map((ranked) => {
+      const item = byChunkId.get(ranked.chunk._id)
+      if (!item) return ranked
+      const supportBoost =
+        item.supportKind === "direct"
+          ? 0.08
+          : item.supportKind === "indirect"
+            ? 0.03
+            : item.supportKind === "irrelevant"
+              ? -0.3
+              : -0.08
+
+      return {
+        ...ranked,
+        score: 0.72 * ranked.score + 0.28 * item.relevanceScore + supportBoost,
+        supportKind: item.supportKind,
+        supportReason: item.reason,
+      }
+    })
+
+    return adjusted
+      .filter((ranked) => ranked.supportKind !== "irrelevant")
+      .sort((a, b) => a.scopePriority - b.scopePriority || b.score - a.score)
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown reranker error"
+    console.warn(`Retrieval reranking failed, using weighted scores: ${message}`)
+    return args.ranked
+  }
+}
+
+function isAnswerable(directMatches: RankedChunk[]): boolean {
+  if (directMatches.length === 0) return false
+  const usable = directMatches.filter(
+    (match) =>
+      match.supportKind === "direct" || match.supportKind === "indirect"
+  )
+  if (usable.length === 0) return false
+  return usable.some(
+    (match) =>
+      match.score >= MIN_ANSWERABLE_SCORE ||
+      match.vectorScore >= 0.5 ||
+      match.lexicalScore >= 0.8
+  )
 }
 
 // ── Public mutations ──
@@ -938,6 +1152,13 @@ export const sendMessage = action({
         queryEmbedding = generateMockEmbedding(args.content)
       }
     }
+    const baseQueryEmbeddings: QueryEmbedding[] = [
+      {
+        embedding: queryEmbedding,
+        embeddingModel: queryEmbeddingModel,
+        weight: 1,
+      },
+    ]
 
     const parsedQuery = parseSearchQuery(args.content)
     const firstPass = await rankRetrievalPass({
@@ -946,8 +1167,7 @@ export const sendMessage = action({
       parsedQuery,
       knowledgeBaseId: conversation.knowledgeBaseId,
       pinnedModuleId: conversation.pinnedModuleId,
-      queryEmbedding,
-      queryEmbeddingModel,
+      queryEmbeddings: baseQueryEmbeddings,
       useMockAi,
       expansionPenalty: 0,
     })
@@ -967,6 +1187,7 @@ export const sendMessage = action({
 
     let ranked = firstPass.ranked
     let directMatches = pickDirectMatches(ranked, useMockAi)
+    let expansionWasUsed = false
     const topRanked = ranked[0]
     const shouldRunExpansion =
       !useMockAi &&
@@ -986,6 +1207,14 @@ export const sendMessage = action({
       })
 
       if (expandedQuery) {
+        const expandedQueryEmbeddings = await generateExpandedQueryEmbeddings({
+          expandedQuery,
+          provider,
+          expectedEmbeddingModel: queryEmbeddingModel,
+          expectedDimensions: queryEmbedding.length,
+          openAiApiKey,
+          geminiApiKey,
+        })
         const expandedPass = await rankRetrievalPass({
           ctx,
           question: args.content,
@@ -993,14 +1222,35 @@ export const sendMessage = action({
           expandedQuery,
           knowledgeBaseId: conversation.knowledgeBaseId,
           pinnedModuleId: conversation.pinnedModuleId,
-          queryEmbedding,
-          queryEmbeddingModel,
+          queryEmbeddings: [
+            ...baseQueryEmbeddings,
+            ...expandedQueryEmbeddings,
+          ],
           useMockAi,
           expansionPenalty: 1,
         })
         ranked = mergeRankedChunks(firstPass.ranked, expandedPass.ranked)
+        expansionWasUsed = true
         directMatches = pickDirectMatches(ranked, useMockAi)
       }
+    }
+
+    if (
+      shouldRerank({
+        ranked,
+        expansionWasUsed,
+        useMockAi,
+      }) &&
+      (provider === "openai" || provider === "gemini")
+    ) {
+      ranked = await rerankTopChunks({
+        question: args.content,
+        ranked,
+        provider,
+        openAiApiKey,
+        geminiApiKey,
+      })
+      directMatches = pickDirectMatches(ranked, useMockAi)
     }
 
     if (directMatches.length === 0) {
@@ -1008,6 +1258,19 @@ export const sendMessage = action({
         firstPass.compatibleCount === 0
           ? `I can't access compatible course material for "${kb.title}" yet. Please reprocess the uploaded documents for the selected AI provider, then ask again.`
           : "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
+
+      await ctx.runMutation(internal.chatInternal.insertMessage, {
+        conversationId: args.conversationId,
+        role: "assistant",
+        content: refusal,
+      })
+
+      return { content: refusal, sources: [] }
+    }
+
+    if (!isAnswerable(directMatches)) {
+      const refusal =
+        "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
 
       await ctx.runMutation(internal.chatInternal.insertMessage, {
         conversationId: args.conversationId,
