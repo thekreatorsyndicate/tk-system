@@ -151,19 +151,15 @@ export default function KBDetailPage({
   const kb = useStableQuery(api.knowledgeBases.getForDashboard, {
     id: id as any,
   })
-  const hasOwnedKnowledgeBase = kb !== undefined && kb !== null
-  const documents = useStableQuery(
-    api.documents.list,
-    hasOwnedKnowledgeBase ? { knowledgeBaseId: id as any } : "skip"
-  )
-  const moduleTree = useStableQuery(
-    api.modules.getTreeForDashboard,
-    hasOwnedKnowledgeBase ? { knowledgeBaseId: id as any } : "skip"
-  )
-  const enrollments = useStableQuery(
-    api.knowledgeBases.listEnrollments,
-    hasOwnedKnowledgeBase ? { knowledgeBaseId: id as any } : "skip"
-  )
+  const documents = useStableQuery(api.documents.list, {
+    knowledgeBaseId: id as any,
+  })
+  const moduleTree = useStableQuery(api.modules.getTreeForDashboard, {
+    knowledgeBaseId: id as any,
+  })
+  const enrollments = useStableQuery(api.knowledgeBases.listEnrollments, {
+    knowledgeBaseId: id as any,
+  })
   const router = useRouter()
   const updateKB = useMutation(api.knowledgeBases.update)
   const removeKB = useMutation(api.knowledgeBases.remove)
@@ -210,10 +206,9 @@ export default function KBDetailPage({
   if (
     profile === undefined ||
     kb === undefined ||
-    (hasOwnedKnowledgeBase &&
-      (documents === undefined ||
-        moduleTree === undefined ||
-        enrollments === undefined))
+    documents === undefined ||
+    moduleTree === undefined ||
+    enrollments === undefined
   ) {
     return <div className="p-8 text-sm">Loading...</div>
   }

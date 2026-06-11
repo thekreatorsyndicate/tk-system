@@ -7,7 +7,12 @@ import { api } from "@/convex/_generated/api"
 import { useAuth } from "@clerk/nextjs"
 import { useStableQuery } from "@/hooks/use-stable-query"
 import { useToast } from "@/components/toast"
-import { ChatCircleText, TreeStructure, X } from "@phosphor-icons/react"
+import {
+  ArrowLeft,
+  ChatCircleText,
+  TreeStructure,
+  X,
+} from "@phosphor-icons/react"
 import { useRouter } from "next/navigation"
 import { use, useState, useRef, useEffect } from "react"
 import ReactMarkdown from "react-markdown"
@@ -369,141 +374,146 @@ export default function KBChatPage({
   )
 
   return (
-    <>
-    <div className="flex h-[calc(100svh-4rem)] min-w-0 flex-col overflow-hidden">
-      <div className="flex h-12 shrink-0 items-center border-y bg-background px-4">
+    <main className="flex h-[calc(100svh-4rem)] min-w-0 flex-col overflow-hidden bg-background px-3 pt-3 pb-3 sm:px-4">
+      <div className="mb-3 flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border/80 pb-3">
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
-          <span aria-hidden="true">←</span>
-          Back to home
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Main workspace
         </button>
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-      <aside className="hidden w-60 shrink-0 flex-col border-r lg:flex">
-        {conversationsPanel}
-      </aside>
+      <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden">
+        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5 lg:flex">
+          {conversationsPanel}
+        </aside>
 
-      <aside className="hidden w-60 shrink-0 flex-col border-r lg:flex">
-        {modulesPanel}
-      </aside>
+        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5 lg:flex">
+          {modulesPanel}
+        </aside>
 
-      {mobilePanel && (
-        <MobileDrawer onClose={() => setMobilePanel(null)}>
-          {mobilePanel === "conversations" ? conversationsPanel : modulesPanel}
-        </MobileDrawer>
-      )}
+        {mobilePanel && (
+          <MobileDrawer onClose={() => setMobilePanel(null)}>
+            {mobilePanel === "conversations"
+              ? conversationsPanel
+              : modulesPanel}
+          </MobileDrawer>
+        )}
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b bg-background">
-          <div className="flex h-12 items-center justify-between gap-3 px-3 sm:px-6">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="min-w-0">
-                <h1 className="truncate text-sm font-medium">{safeKb.title}</h1>
-                {pinnedModuleName && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    Focused on: {pinnedModuleName}
-                  </p>
-                )}
-                {currentConv && !pinnedModuleName && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    {currentConv.title}
-                  </p>
-                )}
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5">
+          <header className="border-b border-border bg-card">
+            <div className="flex min-h-14 items-center justify-between gap-3 px-3 py-2 sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <ChatCircleText
+                      className="size-4 text-primary"
+                      aria-hidden="true"
+                    />
+                    <h1 className="truncate">{safeKb.title}</h1>
+                  </div>
+                  {pinnedModuleName && (
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      Focused on: {pinnedModuleName}
+                    </p>
+                  )}
+                  {currentConv && !pinnedModuleName && (
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {currentConv.title}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="flex shrink-0 gap-2 lg:hidden">
-              <button
-                type="button"
-                onClick={() => setMobilePanel("conversations")}
-                className="flex h-11 items-center gap-1.5 rounded border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <ChatCircleText size={16} aria-hidden />
-                Chats
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobilePanel("modules")}
-                className="flex h-11 items-center gap-1.5 rounded border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <TreeStructure size={16} aria-hidden />
-                Modules
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 sm:p-6">
-          {!conversationId ? (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="flex max-w-sm flex-col items-center gap-3 px-3">
-                <p className="text-center text-sm text-muted-foreground">
-                  Ask a question about{" "}
-                  <span className="font-medium text-foreground">
-                    {safeKb.title}
-                  </span>
-                  {pinnedModuleName
-                    ? " (filtered to the selected module)"
-                    : " to get started"}
-                </p>
+              <div className="flex shrink-0 gap-2 lg:hidden">
                 <button
-                  onClick={handleNewConversation}
-                  disabled={!hasProfile || creatingConversation}
-                  className="min-h-11 rounded bg-primary px-4 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  onClick={() => setMobilePanel("conversations")}
+                  className="flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
-                  {creatingConversation ? "Starting..." : "Start New Chat"}
+                  <ChatCircleText size={16} aria-hidden />
+                  Chats
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobilePanel("modules")}
+                  className="flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <TreeStructure size={16} aria-hidden />
+                  Modules
                 </button>
               </div>
             </div>
-          ) : messages === undefined ? (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-muted-foreground">
-                Loading messages...
-              </p>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-muted-foreground">
-                Send a message to start the conversation
-              </p>
-            </div>
-          ) : (
-            messages.map((msg: any) => <ChatMessage key={msg._id} msg={msg} />)
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+          </header>
 
-        {chatError && (
-          <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive sm:px-4">
-            {chatError}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto bg-background/25 p-3 sm:p-5">
+            {!conversationId ? (
+              <div className="flex flex-1 items-center justify-center">
+                <div className="flex max-w-sm flex-col items-center gap-3 rounded-md border border-dashed border-border bg-card/70 p-6 text-center">
+                  <p className="text-center text-sm text-muted-foreground">
+                    {pinnedModuleName
+                      ? `Focused on ${pinnedModuleName}`
+                      : `Ready for ${safeKb.title}`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleNewConversation}
+                    disabled={!hasProfile || creatingConversation}
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {creatingConversation ? "Starting..." : "Start chat"}
+                  </button>
+                </div>
+              </div>
+            ) : messages === undefined ? (
+              <div className="flex flex-1 items-center justify-center">
+                <p className="text-sm text-muted-foreground">
+                  Loading messages...
+                </p>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center">
+                <p className="text-sm text-muted-foreground">
+                  Send a message to start the conversation
+                </p>
+              </div>
+            ) : (
+              messages.map((msg: any) => (
+                <ChatMessage key={msg._id} msg={msg} />
+              ))
+            )}
+            <div ref={messagesEndRef} />
           </div>
-        )}
 
-        <form
-          onSubmit={handleSend}
-          className="flex gap-2 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
-        >
-          <input
-            className="h-11 min-w-0 flex-1 rounded border px-3 text-sm"
-            placeholder="Ask a question about the course material..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={chatDisabled}
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || chatDisabled}
-            className="h-11 shrink-0 rounded bg-primary px-4 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          {chatError && (
+            <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive sm:px-4">
+              {chatError}
+            </div>
+          )}
+
+          <form
+            onSubmit={handleSend}
+            className="flex gap-2 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
           >
-            {sending ? "..." : "Send"}
-          </button>
-        </form>
-      </main>
+            <input
+              className="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary"
+              placeholder="Ask a question about the course material..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={chatDisabled}
+            />
+            <button
+              type="submit"
+              disabled={!input.trim() || chatDisabled}
+              className="h-11 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sending ? "..." : "Send"}
+            </button>
+          </form>
+        </section>
       </div>
-    </div>
-    </>
+    </main>
   )
 }
 
@@ -522,7 +532,7 @@ function MobileDrawer({
         onClick={onClose}
         className="absolute inset-0 bg-background/80"
       />
-      <aside className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] max-w-full flex-col border-r bg-background shadow-lg">
+      <aside className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] max-w-full flex-col border-r border-border bg-card shadow-lg">
         {children}
       </aside>
     </div>
@@ -539,8 +549,8 @@ function PanelHeader({
   onClose?: () => void
 }) {
   return (
-    <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
-      <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+    <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+      <h2 className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
         {title}
       </h2>
       <div className="flex items-center gap-1.5">
@@ -550,7 +560,7 @@ function PanelHeader({
             type="button"
             aria-label="Close panel"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
           >
             <X size={16} aria-hidden />
           </button>
@@ -608,12 +618,12 @@ function ConversationsPanel({
           type="button"
           onClick={onNewConversation}
           disabled={!hasProfile || creatingConversation}
-          className="rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           {creatingConversation ? "Starting..." : "+ New"}
         </button>
       </PanelHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3">
         {scopedConversations.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">
             {pinnedModuleId
@@ -640,7 +650,7 @@ function ConversationsPanel({
               confirmingId={confirmingConversationId}
             />
             {showArchived && archivedConversations.length > 0 && (
-              <div className="mt-3 border-t pt-2">
+              <div className="mt-3 border-t border-border pt-3">
                 <p className="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
                   Archived
                 </p>
@@ -664,11 +674,11 @@ function ConversationsPanel({
         )}
       </div>
       {archivedConversations.length > 0 && (
-        <div className="border-t p-2">
+        <div className="border-t border-border p-3">
           <button
             type="button"
             onClick={() => onShowArchivedChange((value) => !value)}
-            className="min-h-11 w-full rounded px-2 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:min-h-0 lg:py-1.5"
+            className="min-h-11 w-full rounded-md px-2 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:min-h-0 lg:py-1.5"
           >
             {showArchived
               ? "Hide archived conversations"
@@ -698,11 +708,11 @@ function ModulesPanel({
   return (
     <>
       <PanelHeader title="Modules" onClose={onClose} />
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3">
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`min-h-11 rounded px-2 py-2 text-left text-sm transition-colors lg:min-h-0 lg:py-1 ${
+          className={`min-h-11 rounded-md px-2 py-2 text-left text-sm transition-colors lg:min-h-0 lg:py-1.5 ${
             pinnedModuleId === null ? "bg-muted font-medium" : "hover:bg-muted"
           }`}
         >
@@ -759,7 +769,7 @@ function ModuleTreeItem({
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className={`flex items-center rounded transition-colors ${
+        className={`flex items-center rounded-md transition-colors ${
           activeModuleId === mod._id ? "bg-muted font-medium" : "hover:bg-muted"
         }`}
       >
@@ -781,7 +791,7 @@ function ModuleTreeItem({
         </button>
       </div>
       {hasChildren && isExpanded && (
-        <div className="ml-4 flex flex-col gap-0.5 border-l pl-2">
+        <div className="ml-4 flex flex-col gap-1 border-l border-border pl-2">
           {children.map((child: any) => (
             <ModuleTreeItem
               key={child._id}
@@ -831,8 +841,8 @@ function ChatMessage({ msg }: { msg: any }) {
       <div
         className={`min-w-0 overflow-hidden text-sm leading-relaxed break-words ${
           isUser
-            ? "max-w-[min(38rem,88%)] rounded-lg bg-primary px-4 py-2 text-primary-foreground"
-            : "w-full max-w-[min(52rem,100%)] rounded-lg bg-muted px-4 py-3 text-foreground"
+            ? "max-w-[min(38rem,88%)] rounded-md bg-primary px-4 py-2 text-primary-foreground"
+            : "w-full max-w-[min(52rem,100%)] rounded-md border border-border bg-card px-4 py-3 text-foreground shadow-sm shadow-black/5"
         }`}
       >
         <MarkdownContent
@@ -1011,7 +1021,7 @@ function CourseSources({ sources }: { sources: any[] }) {
           return (
             <div
               key={source.chunkId}
-              className="min-w-0 overflow-hidden rounded border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
+              className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
             >
               <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-medium text-foreground">
@@ -1088,7 +1098,7 @@ function ConversationList({
   }
 
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
       {conversations.map((conv: any) => {
         const isArchiving = archivingIds.has(conv._id)
         const isDeleting = deletingIds.has(conv._id)
@@ -1098,14 +1108,14 @@ function ConversationList({
         return (
           <div
             key={conv._id}
-            className={`group rounded transition-colors ${
+            className={`group rounded-md border border-transparent transition-colors ${
               conversationId === conv._id ? "bg-muted" : "hover:bg-muted"
             }`}
           >
             <button
               type="button"
               onClick={() => onSelect(conv._id)}
-              className="flex min-h-14 w-full flex-col justify-center gap-0.5 px-2 py-2 text-left text-xs lg:min-h-0 lg:py-1.5"
+              className="flex min-h-14 w-full flex-col justify-center gap-0.5 px-2 py-2 text-left text-xs lg:min-h-0 lg:py-2"
             >
               <span className="truncate font-medium">{conv.title}</span>
               {conv.modulePath?.length > 0 ? (
@@ -1146,7 +1156,7 @@ function ConversationList({
               </button>
             </div>
             {isConfirmingDelete && (
-              <div className="mx-2 mb-2 rounded border border-destructive/30 bg-destructive/5 p-2">
+              <div className="mx-2 mb-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
                 <p className="text-[11px] font-medium text-destructive">
                   Delete this conversation?
                 </p>
