@@ -7,6 +7,8 @@ import { api } from "@/convex/_generated/api"
 import { useAuth } from "@clerk/nextjs"
 import { useStableQuery } from "@/hooks/use-stable-query"
 import { use, useState, useRef, useEffect } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 export default function KBChatPage({
   params,
@@ -312,59 +314,7 @@ export default function KBChatPage({
               </p>
             </div>
           ) : (
-            messages.map((msg: any) => (
-              <div
-                key={msg._id}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[70%] rounded-lg px-4 py-2 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
-                  }`}
-                >
-                  {msg.content}
-                  {msg.role === "assistant" && msg.sourceChunks?.length > 0 && (
-                    <div className="mt-3 border-t border-border/60 pt-2">
-                      <p className="mb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
-                        Course Sources
-                      </p>
-                      <div className="flex flex-col gap-1.5">
-                        {msg.sourceChunks.map((source: any, index: number) => (
-                          <div
-                            key={source.chunkId}
-                            className="rounded border border-border/60 px-2 py-1 text-xs text-muted-foreground"
-                          >
-                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="font-medium text-foreground">
-                                [{source.sourceNumber ?? index + 1}]
-                              </span>
-                              <span className="font-medium text-foreground">
-                                {source.modulePath?.length > 0
-                                  ? source.modulePath.join(" > ")
-                                  : "Course-level material"}
-                              </span>
-                              {source.sourceKind === "adjacent" && (
-                                <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] uppercase">
-                                  supporting context
-                                </span>
-                              )}
-                            </div>
-                            {source.headingPath?.length > 0 && (
-                              <p className="mb-1 text-[11px] text-muted-foreground">
-                                {source.headingPath.join(" > ")}
-                              </p>
-                            )}
-                            <p>{source.content}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
+            messages.map((msg: any) => <ChatMessage key={msg._id} msg={msg} />)
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -478,6 +428,224 @@ function findModuleById(modules: any[], moduleId: string): any | null {
     if (child) return child
   }
   return null
+}
+
+function ChatMessage({ msg }: { msg: any }) {
+  const isUser = msg.role === "user"
+
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`min-w-0 text-sm leading-relaxed ${
+          isUser
+            ? "max-w-[min(38rem,88%)] rounded-lg bg-primary px-4 py-2 text-primary-foreground"
+            : "w-full max-w-[min(52rem,100%)] rounded-lg bg-muted px-4 py-3 text-foreground"
+        }`}
+      >
+        <MarkdownContent
+          content={msg.content}
+          variant={isUser ? "user" : "assistant"}
+        />
+        {!isUser && msg.sourceChunks?.length > 0 && (
+          <CourseSources sources={msg.sourceChunks} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MarkdownContent({
+  content,
+  variant = "assistant",
+}: {
+  content: string
+  variant?: "assistant" | "user" | "source"
+}) {
+  const isUser = variant === "user"
+  const isSource = variant === "source"
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => (
+          <p className={isSource ? "mb-1 last:mb-0" : "mb-3 last:mb-0"}>
+            {children}
+          </p>
+        ),
+        h1: ({ children }) => (
+          <h1 className="mt-4 mb-2 text-base font-semibold first:mt-0">
+            {children}
+          </h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="mt-4 mb-2 text-sm font-semibold first:mt-0">
+            {children}
+          </h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="mt-3 mb-1.5 text-sm font-semibold first:mt-0">
+            {children}
+          </h3>
+        ),
+        ul: ({ children }) => (
+          <ul className="mb-3 ml-4 list-disc space-y-1 last:mb-0">
+            {children}
+          </ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-3 ml-4 list-decimal space-y-1 last:mb-0">
+            {children}
+          </ol>
+        ),
+        li: ({ children }) => <li className="pl-1">{children}</li>,
+        input: (props) => (
+          <input {...props} className="mr-2 align-[-0.125em] accent-primary" />
+        ),
+        strong: ({ children }) => (
+          <strong className="font-semibold">{children}</strong>
+        ),
+        em: ({ children }) => <em className="italic">{children}</em>,
+        del: ({ children }) => (
+          <del className="text-muted-foreground">{children}</del>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className={
+              isUser
+                ? "underline decoration-primary-foreground/50 underline-offset-4 hover:decoration-primary-foreground"
+                : "font-medium text-primary underline decoration-primary/30 underline-offset-4 hover:decoration-primary"
+            }
+          >
+            {children}
+          </a>
+        ),
+        blockquote: ({ children }) => (
+          <blockquote
+            className={`mb-3 border-l-2 py-0.5 pl-3 last:mb-0 ${
+              isUser
+                ? "border-primary-foreground/50 text-primary-foreground/85"
+                : "border-primary/40 text-muted-foreground"
+            }`}
+          >
+            {children}
+          </blockquote>
+        ),
+        code: ({ children, className }) => {
+          const text = String(children)
+          const isBlock =
+            /language-/.test(className ?? "") || text.includes("\n")
+
+          return (
+            <code
+              className={
+                isBlock
+                  ? "block min-w-full overflow-x-auto rounded border border-border/70 bg-background px-3 py-2 text-xs leading-relaxed whitespace-pre text-foreground"
+                  : `rounded px-1 py-0.5 text-[0.85em] ${
+                      isUser
+                        ? "bg-primary-foreground/15 text-primary-foreground"
+                        : "bg-background text-foreground"
+                    }`
+              }
+            >
+              {children}
+            </code>
+          )
+        },
+        pre: ({ children }) => (
+          <pre className="mb-3 max-w-full overflow-x-auto last:mb-0">
+            {children}
+          </pre>
+        ),
+        table: ({ children }) => (
+          <div className="mb-3 max-w-full overflow-x-auto rounded border border-border/70 last:mb-0">
+            <table className="w-full min-w-[32rem] border-collapse text-left text-xs">
+              {children}
+            </table>
+          </div>
+        ),
+        thead: ({ children }) => (
+          <thead className="bg-background/70">{children}</thead>
+        ),
+        th: ({ children }) => (
+          <th className="border-b border-border/70 px-3 py-2 font-semibold">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border-b border-border/50 px-3 py-2 align-top">
+            {children}
+          </td>
+        ),
+        img: ({ alt, src }) => {
+          const imageHref = typeof src === "string" ? src : undefined
+
+          return imageHref ? (
+            <a
+              href={imageHref}
+              target="_blank"
+              rel="noreferrer"
+              className={
+                isUser
+                  ? "underline decoration-primary-foreground/50 underline-offset-4 hover:decoration-primary-foreground"
+                  : "font-medium text-primary underline decoration-primary/30 underline-offset-4 hover:decoration-primary"
+              }
+            >
+              {alt || "Open image"}
+            </a>
+          ) : null
+        },
+        hr: () => <hr className="my-4 border-border/70" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
+
+function CourseSources({ sources }: { sources: any[] }) {
+  return (
+    <div className="mt-4 border-t border-border/60 pt-3">
+      <p className="mb-2 text-[10px] tracking-wider text-muted-foreground uppercase">
+        Course Sources
+      </p>
+      <div className="flex flex-col gap-2">
+        {sources.map((source: any, index: number) => (
+          <div
+            key={source.chunkId}
+            className="rounded border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
+          >
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium text-foreground">
+                [{source.sourceNumber ?? index + 1}]
+              </span>
+              <span className="font-medium text-foreground">
+                {source.modulePath?.length > 0
+                  ? source.modulePath.join(" > ")
+                  : "Course-level material"}
+              </span>
+              {source.sourceKind === "adjacent" && (
+                <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] uppercase">
+                  supporting context
+                </span>
+              )}
+            </div>
+            {source.headingPath?.length > 0 && (
+              <p className="mb-1.5 text-[11px] text-muted-foreground">
+                {source.headingPath.join(" > ")}
+              </p>
+            )}
+            <div className="text-xs leading-relaxed">
+              <MarkdownContent content={source.content} variant="source" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function ConversationList({
