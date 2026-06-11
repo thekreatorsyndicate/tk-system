@@ -375,23 +375,26 @@ export default function KBChatPage({
   )
 
   return (
-    <main className="flex h-[calc(100svh-4rem)] min-w-0 flex-col overflow-hidden bg-background px-3 pt-3 pb-3 sm:px-4">
+    <main
+      id="main-content"
+      className="flex h-[calc(100svh-4rem)] min-w-0 flex-col overflow-hidden bg-background px-3 pt-3 pb-3 sm:px-4"
+    >
       <div className="mb-3 flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border/80 pb-3">
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" aria-hidden="true" />
           Main workspace
         </button>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden">
-        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5 lg:flex">
+        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm shadow-black/5 lg:flex">
           {conversationsPanel}
         </aside>
 
-        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5 lg:flex">
+        <aside className="hidden w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm shadow-black/5 lg:flex">
           {modulesPanel}
         </aside>
 
@@ -403,7 +406,7 @@ export default function KBChatPage({
           </MobileDrawer>
         )}
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-card shadow-sm shadow-black/5">
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm shadow-black/5">
           <header className="border-b border-border bg-card">
             <div className="flex min-h-14 items-center justify-between gap-3 px-3 py-2 sm:px-5">
               <div className="flex min-w-0 items-center gap-3">
@@ -451,11 +454,15 @@ export default function KBChatPage({
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto bg-background/25 p-3 sm:p-5">
             {!conversationId ? (
               <div className="flex flex-1 items-center justify-center">
-                <div className="flex max-w-sm flex-col items-center gap-3 rounded-md border border-dashed border-border bg-card/70 p-6 text-center">
-                  <p className="text-center text-sm text-muted-foreground">
+                <div className="flex max-w-sm flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card/80 p-6 text-center shadow-sm shadow-black/5">
+                  <p className="text-center text-sm font-medium">
                     {pinnedModuleName
                       ? `Focused on ${pinnedModuleName}`
                       : `Ready for ${safeKb.title}`}
+                  </p>
+                  <p className="text-center text-xs leading-5 text-muted-foreground">
+                    Start a chat and ask from the course material available to
+                    you.
                   </p>
                   <button
                     type="button"
@@ -498,7 +505,7 @@ export default function KBChatPage({
             className="flex gap-2 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
           >
             <input
-              className="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary"
+              className="h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-ring/20"
               placeholder="Ask a question about the course material..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -507,7 +514,7 @@ export default function KBChatPage({
             <button
               type="submit"
               disabled={!input.trim() || chatDisabled}
-              className="h-11 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-11 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
             >
               {sending ? "..." : "Send"}
             </button>
@@ -531,9 +538,9 @@ function MobileDrawer({
         type="button"
         aria-label="Close panel"
         onClick={onClose}
-        className="absolute inset-0 bg-background/80"
+        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
       />
-      <aside className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] max-w-full flex-col border-r border-border bg-card shadow-lg">
+      <aside className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] max-w-full flex-col border-r border-border bg-card shadow-lg shadow-black/10">
         {children}
       </aside>
     </div>
@@ -551,9 +558,7 @@ function PanelHeader({
 }) {
   return (
     <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
-      <h2 className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-        {title}
-      </h2>
+      <h2 className="text-xs font-semibold text-muted-foreground">{title}</h2>
       <div className="flex items-center gap-1.5">
         {children}
         {onClose && (
@@ -652,7 +657,7 @@ function ConversationsPanel({
             />
             {showArchived && archivedConversations.length > 0 && (
               <div className="mt-3 border-t border-border pt-3">
-                <p className="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
+                <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground">
                   Archived
                 </p>
                 <ConversationList
@@ -713,8 +718,10 @@ function ModulesPanel({
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`min-h-11 rounded-md px-2 py-2 text-left text-sm transition-colors lg:min-h-0 lg:py-1.5 ${
-            pinnedModuleId === null ? "bg-muted font-medium" : "hover:bg-muted"
+          className={`min-h-11 rounded-md border-l-2 px-2 py-2 text-left text-sm transition-colors lg:min-h-0 lg:py-1.5 ${
+            pinnedModuleId === null
+              ? "border-l-primary bg-muted font-medium"
+              : "border-l-transparent hover:bg-muted"
           }`}
         >
           All Modules
@@ -770,8 +777,10 @@ function ModuleTreeItem({
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className={`flex items-center rounded-md transition-colors ${
-          activeModuleId === mod._id ? "bg-muted font-medium" : "hover:bg-muted"
+        className={`flex items-center rounded-md border-l-2 transition-colors ${
+          activeModuleId === mod._id
+            ? "border-l-primary bg-muted font-medium"
+            : "border-l-transparent hover:bg-muted"
         }`}
       >
         <button
@@ -842,8 +851,8 @@ function ChatMessage({ msg }: { msg: any }) {
       <div
         className={`min-w-0 overflow-hidden text-sm leading-relaxed break-words ${
           isUser
-            ? "max-w-[min(38rem,88%)] rounded-md bg-primary px-4 py-2 text-primary-foreground"
-            : "w-full max-w-[min(52rem,100%)] rounded-md border border-border bg-card px-4 py-3 text-foreground shadow-sm shadow-black/5"
+            ? "max-w-[min(38rem,88%)] rounded-lg bg-primary px-4 py-2 text-primary-foreground shadow-sm shadow-black/5"
+            : "w-full max-w-[min(52rem,100%)] rounded-lg border border-border bg-card px-4 py-3 text-foreground shadow-sm shadow-black/5"
         }`}
       >
         <MarkdownContent
@@ -1013,8 +1022,8 @@ function MarkdownContent({
 function CourseSources({ sources }: { sources: any[] }) {
   return (
     <div className="mt-4 border-t border-border/60 pt-3">
-      <p className="mb-2 text-[10px] tracking-wider text-muted-foreground uppercase">
-        Course Sources
+      <p className="mb-2 text-xs font-medium text-muted-foreground">
+        Course sources
       </p>
       <div className="flex flex-col gap-2">
         {sources.map((source: any, index: number) => {
@@ -1022,7 +1031,7 @@ function CourseSources({ sources }: { sources: any[] }) {
           return (
             <div
               key={source.chunkId}
-              className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
+              className="min-w-0 overflow-hidden rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
             >
               <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="font-medium text-foreground">
@@ -1033,7 +1042,7 @@ function CourseSources({ sources }: { sources: any[] }) {
                     ? source.modulePath.join(" > ")
                     : "Course-level material"}
                 </span>
-                <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] uppercase">
+                <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-[10px] font-medium">
                   {supportLabel}
                 </span>
               </div>
@@ -1109,8 +1118,10 @@ function ConversationList({
         return (
           <div
             key={conv._id}
-            className={`group rounded-md border border-transparent transition-colors ${
-              conversationId === conv._id ? "bg-muted" : "hover:bg-muted"
+            className={`group rounded-md border border-transparent border-l-transparent transition-colors ${
+              conversationId === conv._id
+                ? "border-l-primary bg-muted"
+                : "hover:bg-muted"
             }`}
           >
             <button

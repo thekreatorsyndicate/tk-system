@@ -7,6 +7,13 @@ import { api } from "@/convex/_generated/api"
 import { useAuth } from "@clerk/nextjs"
 import { useStableQuery } from "@/hooks/use-stable-query"
 import { useToast } from "@/components/toast"
+import {
+  ArrowLeft,
+  CheckCircle,
+  Circle,
+  FileText,
+  UploadSimple,
+} from "@phosphor-icons/react"
 import { useRouter } from "next/navigation"
 import { use, useState, useRef, type DragEvent } from "react"
 
@@ -41,20 +48,20 @@ function ModuleTreeItem({
 
   return (
     <div className="flex flex-col gap-1" style={{ marginLeft: depth * 16 }}>
-      <div className="flex items-center justify-between rounded border px-3 py-2">
+      <div className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2">
         <span className="text-sm">{mod.name}</span>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => setIsAddingSubModule(true)}
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             + Sub
           </button>
           <button
             type="button"
             onClick={() => setIsConfirmingRemove(true)}
-            className="text-xs text-destructive"
+            className="rounded-md px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
           >
             Remove
           </button>
@@ -63,42 +70,47 @@ function ModuleTreeItem({
       {isAddingSubModule && (
         <form
           onSubmit={handleAddSubModule}
-          className="flex flex-col gap-2 rounded border border-dashed px-3 py-2 sm:flex-row sm:items-center"
+          className="flex flex-col gap-2 rounded-md border border-dashed border-border bg-muted/20 px-3 py-2"
         >
-          <label className="sr-only" htmlFor={`sub-module-${mod._id}`}>
+          <label
+            className="text-xs font-medium"
+            htmlFor={`sub-module-${mod._id}`}
+          >
             Sub-module name
           </label>
-          <input
-            id={`sub-module-${mod._id}`}
-            autoFocus
-            value={subModuleName}
-            onChange={(e) => setSubModuleName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") cancelSubModule()
-            }}
-            placeholder="Sub-module name..."
-            className="min-w-0 flex-1 rounded border px-3 py-1.5 text-sm"
-          />
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={!subModuleName.trim()}
-              className="rounded border px-3 py-1.5 text-xs disabled:opacity-50"
-            >
-              Add
-            </button>
-            <button
-              type="button"
-              onClick={cancelSubModule}
-              className="rounded border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              id={`sub-module-${mod._id}`}
+              autoFocus
+              value={subModuleName}
+              onChange={(e) => setSubModuleName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelSubModule()
+              }}
+              placeholder="Practice set"
+              className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring/20"
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={!subModuleName.trim()}
+                className="rounded-md border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={cancelSubModule}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </form>
       )}
       {isConfirmingRemove && (
-        <div className="rounded border border-destructive/30 bg-destructive/5 px-3 py-2">
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
           <p className="text-xs font-medium text-destructive">
             Remove this module?
           </p>
@@ -110,7 +122,7 @@ function ModuleTreeItem({
             <button
               type="button"
               onClick={() => setIsConfirmingRemove(false)}
-              className="rounded border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               Cancel
             </button>
@@ -120,7 +132,7 @@ function ModuleTreeItem({
                 onRemove(mod._id)
                 setIsConfirmingRemove(false)
               }}
-              className="rounded border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"
+              className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"
             >
               Remove module
             </button>
@@ -507,38 +519,41 @@ export default function KBDetailPage({
   }
 
   return (
-    <div className="grid gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-start">
-      <div className="min-w-0 border-b pb-5">
+    <main
+      id="main-content"
+      className="grid gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-start"
+    >
+      <section className="min-w-0 rounded-lg border border-border/80 bg-card/70 p-5 shadow-sm shadow-black/5 sm:p-6">
         <button
           type="button"
           onClick={() => router.push("/dashboard")}
-          className="mb-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="mb-4 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
-          <span aria-hidden="true">←</span>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
           Back to dashboard
         </button>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-medium tracking-tight">{safeKb.title}</h1>
-          <span className="rounded border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          <h1 className="text-3xl leading-tight font-semibold tracking-tight text-balance sm:text-4xl">
+            {safeKb.title}
+          </h1>
+          <span className="rounded-md border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
             {safeKb.isPublished ? "Published" : "Draft"}
           </span>
         </div>
         {safeKb.description && (
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             {safeKb.description}
           </p>
         )}
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <span>{flattenedModules.length} modules</span>
-          <span aria-hidden="true">/</span>
-          <span>{documents.length} documents</span>
-          <span aria-hidden="true">/</span>
-          <span>{documentSummary.ready} ready</span>
+        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+          <HeaderStat label="Modules" value={flattenedModules.length} />
+          <HeaderStat label="Documents" value={documents.length} />
+          <HeaderStat label="Ready" value={documentSummary.ready} />
         </div>
-      </div>
+      </section>
 
       <aside className="flex flex-col gap-3 lg:sticky lg:top-20 lg:row-span-2">
-        <div className="flex flex-col gap-3 rounded border bg-card p-4">
+        <section className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-sm shadow-black/5">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-medium">Publication readiness</h2>
@@ -549,7 +564,7 @@ export default function KBDetailPage({
             <button
               onClick={handlePublish}
               disabled={publishBlocked || publishing || deletingKb}
-              className="rounded border px-3 py-1.5 text-xs transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               {publishing
                 ? "Saving..."
@@ -562,16 +577,17 @@ export default function KBDetailPage({
           <div className="flex flex-col gap-1.5">
             {publishReadiness.checklist.map((item) => (
               <div key={item.label} className="flex items-center gap-2 text-xs">
-                <span
-                  className={
-                    item.done
-                      ? "font-medium text-green-600"
-                      : "font-medium text-muted-foreground"
-                  }
-                  aria-hidden="true"
-                >
-                  {item.done ? "✓" : "○"}
-                </span>
+                {item.done ? (
+                  <CheckCircle
+                    className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Circle
+                    className="size-4 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                )}
                 <span
                   className={
                     item.done ? "text-foreground" : "text-muted-foreground"
@@ -594,7 +610,7 @@ export default function KBDetailPage({
           )}
 
           {publishReadiness.failedDocuments.length > 0 && (
-            <div className="flex flex-col gap-2 border-t pt-3">
+            <div className="flex flex-col gap-2 border-t border-border/70 pt-3">
               <p className="text-xs font-medium text-destructive">
                 Failed documents
               </p>
@@ -614,7 +630,7 @@ export default function KBDetailPage({
                   <button
                     onClick={() => handleRetryDocument(doc._id)}
                     disabled={retryingDocIds.has(doc._id)}
-                    className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    className="shrink-0 rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                   >
                     {retryingDocIds.has(doc._id) ? "Retrying..." : "Retry"}
                   </button>
@@ -622,9 +638,9 @@ export default function KBDetailPage({
               ))}
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="flex flex-col gap-3 rounded border bg-card p-4">
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-sm shadow-black/5">
           <div>
             <h2 className="text-sm font-medium">Student access</h2>
             <p className="text-xs text-muted-foreground">
@@ -633,22 +649,28 @@ export default function KBDetailPage({
                 : "Publish this course before enrolled students can open it."}
             </p>
           </div>
-          <form onSubmit={handleEnrollStudent} className="flex gap-2">
-            <input
-              className="min-w-0 flex-1 rounded border px-3 py-1.5 text-sm"
-              type="email"
-              placeholder="student@example.com"
-              value={studentEmail}
-              onChange={(e) => setStudentEmail(e.target.value)}
-              disabled={enrolling}
-            />
-            <button
-              type="submit"
-              disabled={!studentEmail.trim() || enrolling}
-              className="rounded border px-3 py-1.5 text-xs disabled:opacity-50"
-            >
-              {enrolling ? "Enrolling..." : "Enroll"}
-            </button>
+          <form onSubmit={handleEnrollStudent} className="grid gap-2">
+            <label className="text-xs font-medium" htmlFor="student-email">
+              Email
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="student-email"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring/20"
+                type="email"
+                placeholder="student@example.com"
+                value={studentEmail}
+                onChange={(e) => setStudentEmail(e.target.value)}
+                disabled={enrolling}
+              />
+              <button
+                type="submit"
+                disabled={!studentEmail.trim() || enrolling}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {enrolling ? "Enrolling..." : "Enroll"}
+              </button>
+            </div>
           </form>
           {enrollmentMessage && (
             <p className="text-xs text-muted-foreground">{enrollmentMessage}</p>
@@ -662,7 +684,7 @@ export default function KBDetailPage({
               {enrollments.map((enrollment: any) => (
                 <div
                   key={enrollment._id}
-                  className="flex items-center justify-between gap-3 border-t py-2 first:border-t-0"
+                  className="flex items-center justify-between gap-3 border-t border-border/70 py-2 first:border-t-0"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm">
@@ -674,7 +696,7 @@ export default function KBDetailPage({
                   </div>
                   <button
                     onClick={() => handleRemoveEnrollment(enrollment._id)}
-                    className="shrink-0 text-xs text-destructive"
+                    className="shrink-0 rounded-md px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
                   >
                     Remove
                   </button>
@@ -682,50 +704,53 @@ export default function KBDetailPage({
               ))}
             </div>
           )}
-        </div>
+        </section>
 
-        {confirmingKbDelete ? (
-          <div className="rounded border border-destructive/30 bg-destructive/5 p-3">
-            <p className="text-sm font-medium text-destructive">
-              Delete this knowledge base?
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              This permanently deletes the course, its modules, documents, and
-              conversations. This cannot be undone.
-            </p>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setConfirmingKbDelete(false)}
-                disabled={deletingKb}
-                className="rounded border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={deletingKb || publishing}
-                className="rounded border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {deletingKb ? "Deleting..." : "Delete knowledge base"}
-              </button>
+        <section className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+          <h2 className="text-sm font-medium text-destructive">Danger zone</h2>
+          {confirmingKbDelete ? (
+            <div className="mt-3">
+              <p className="text-sm font-medium text-destructive">
+                Delete this knowledge base?
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                This permanently deletes the course, its modules, documents, and
+                conversations. This cannot be undone.
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingKbDelete(false)}
+                  disabled={deletingKb}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deletingKb || publishing}
+                  className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                >
+                  {deletingKb ? "Deleting..." : "Delete knowledge base"}
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmingKbDelete(true)}
-            disabled={publishing}
-            className="self-end rounded border border-destructive/30 px-3 py-1.5 text-xs text-destructive disabled:opacity-50"
-          >
-            Delete
-          </button>
-        )}
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingKbDelete(true)}
+              disabled={publishing}
+              className="mt-3 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          )}
+        </section>
       </aside>
 
-      <main className="flex min-w-0 flex-col gap-8">
-        <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-5">
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5 shadow-sm shadow-black/5">
           <h2 className="text-sm font-medium">Modules</h2>
           {moduleTree.length === 0 ? (
             <p className="text-xs text-muted-foreground">
@@ -754,30 +779,43 @@ export default function KBDetailPage({
               ))}
             </div>
           )}
-          <div className="flex gap-2">
-            <input
-              className="flex-1 rounded border px-3 py-1.5 text-sm"
-              placeholder="Module name..."
-              value={moduleName}
-              onChange={(e) => setModuleName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAddModule()}
-              disabled={addingModule}
-            />
-            <button
-              onClick={handleAddModule}
-              disabled={!moduleName.trim() || addingModule}
-              className="rounded border px-3 py-1.5 text-xs disabled:opacity-50"
-            >
-              {addingModule ? "Adding..." : "Add"}
-            </button>
+          <div className="grid gap-2">
+            <label className="text-xs font-medium" htmlFor="module-name">
+              Module name
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="module-name"
+                className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring/20"
+                placeholder="Unit 1"
+                value={moduleName}
+                onChange={(e) => setModuleName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddModule()}
+                disabled={addingModule}
+              />
+              <button
+                onClick={handleAddModule}
+                disabled={!moduleName.trim() || addingModule}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {addingModule ? "Adding..." : "Add"}
+              </button>
+            </div>
           </div>
-        </div>
+        </section>
 
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium">Upload Documents</h2>
-          <div className="flex gap-2">
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5 shadow-sm shadow-black/5">
+          <div className="flex items-center gap-2">
+            <UploadSimple className="size-4 text-primary" aria-hidden="true" />
+            <h2 className="text-sm font-medium">Upload documents</h2>
+          </div>
+          <div className="grid gap-2">
+            <label className="text-xs font-medium" htmlFor="upload-module">
+              Add to module
+            </label>
             <select
-              className="rounded border px-3 py-1.5 text-xs"
+              id="upload-module"
+              className="w-fit max-w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-ring/20"
               value={uploadModuleId}
               onChange={(e) => setUploadModuleId(e.target.value)}
             >
@@ -790,6 +828,9 @@ export default function KBDetailPage({
                 </option>
               ))}
             </select>
+            <p className="text-xs text-muted-foreground">
+              Selected files will inherit this module assignment.
+            </p>
           </div>
           <div
             onDrop={handleDrop}
@@ -798,7 +839,7 @@ export default function KBDetailPage({
             onClick={() => {
               if (!uploading) fileInputRef.current?.click()
             }}
-            className={`flex cursor-pointer flex-col items-center gap-2 rounded border-2 border-dashed p-8 text-sm transition-colors ${
+            className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-sm transition-colors ${
               dragOver
                 ? "border-primary bg-primary/5"
                 : uploading
@@ -819,6 +860,10 @@ export default function KBDetailPage({
               <span className="text-muted-foreground">Uploading files...</span>
             ) : (
               <>
+                <UploadSimple
+                  className="size-6 text-muted-foreground"
+                  aria-hidden="true"
+                />
                 <span className="font-medium">Drop files here</span>
                 <span className="text-xs text-muted-foreground">
                   or click to browse
@@ -827,7 +872,7 @@ export default function KBDetailPage({
             )}
           </div>
           {uploadQueue.length > 0 && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 rounded-md border border-border/70 bg-background/50 p-2">
               {uploadQueue.map((item) => (
                 <div
                   key={item.name}
@@ -836,7 +881,7 @@ export default function KBDetailPage({
                   <span
                     className={
                       item.status === "done"
-                        ? "text-green-600"
+                        ? "text-emerald-600 dark:text-emerald-400"
                         : item.status === "error"
                           ? "text-destructive"
                           : "text-muted-foreground"
@@ -853,12 +898,15 @@ export default function KBDetailPage({
               ))}
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="flex flex-col gap-3">
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5 shadow-sm shadow-black/5">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-sm font-medium">Documents</h2>
+              <div className="flex items-center gap-2">
+                <FileText className="size-4 text-primary" aria-hidden="true" />
+                <h2 className="text-sm font-medium">Documents</h2>
+              </div>
               <p className="text-xs text-muted-foreground">
                 Students can use course material after documents are ready.
               </p>
@@ -886,7 +934,7 @@ export default function KBDetailPage({
 
           {hasDocuments && (
             <div
-              className={`rounded border px-4 py-3 text-sm ${getReadinessClassName(documentSummary)}`}
+              className={`rounded-lg border px-4 py-3 text-sm ${getReadinessClassName(documentSummary)}`}
             >
               <div className="font-medium">
                 {getReadinessTitle(documentSummary)}
@@ -898,7 +946,7 @@ export default function KBDetailPage({
           )}
 
           {documents.length === 0 ? (
-            <div className="rounded border border-dashed p-6 text-sm">
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-sm">
               <div className="font-medium">No documents uploaded yet.</div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Choose a module above, then upload a PDF, DOCX, TXT, or Markdown
@@ -907,7 +955,7 @@ export default function KBDetailPage({
               </p>
             </div>
           ) : (
-            <div className="rounded border bg-card">
+            <div className="overflow-hidden rounded-lg border border-border bg-card">
               <button
                 type="button"
                 aria-expanded={documentsOpen}
@@ -936,9 +984,12 @@ export default function KBDetailPage({
               </button>
 
               {documentsOpen && (
-                <div className="flex flex-col border-t">
+                <div className="flex flex-col border-t border-border/70">
                   {documentGroups.map((group) => (
-                    <div key={group.key} className="border-t first:border-t-0">
+                    <div
+                      key={group.key}
+                      className="border-t border-border/70 first:border-t-0"
+                    >
                       <button
                         type="button"
                         aria-expanded={openDocumentGroupKeys.has(group.key)}
@@ -956,7 +1007,7 @@ export default function KBDetailPage({
                           </span>
                         </span>
                         <span className="flex shrink-0 items-center gap-3">
-                          <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
+                          <span className="rounded-md border border-border/70 bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
                             {group.totalCount}{" "}
                             {group.totalCount === 1 ? "doc" : "docs"}
                           </span>
@@ -974,7 +1025,7 @@ export default function KBDetailPage({
                       </button>
 
                       {openDocumentGroupKeys.has(group.key) && (
-                        <div className="flex flex-col gap-3 border-t bg-background/40 p-3">
+                        <div className="flex flex-col gap-3 border-t border-border/70 bg-background/40 p-3">
                           {group.documents.length > 0 && (
                             <div className="flex flex-col gap-2">
                               {group.childGroups.length > 0 && (
@@ -1004,7 +1055,7 @@ export default function KBDetailPage({
                           {group.childGroups.map((childGroup) => (
                             <div
                               key={childGroup.key}
-                              className="flex flex-col gap-2 border-l border-border pl-3"
+                              className="flex flex-col gap-2 border-l border-border/70 pl-3"
                             >
                               <div className="flex items-center justify-between gap-3">
                                 <h3 className="text-xs font-medium text-muted-foreground">
@@ -1040,8 +1091,19 @@ export default function KBDetailPage({
               )}
             </div>
           )}
-        </div>
-      </main>
+        </section>
+      </div>
+    </main>
+  )
+}
+
+function HeaderStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2">
+      <p className="font-mono text-lg leading-none font-semibold tabular-nums">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">{label}</p>
     </div>
   )
 }
@@ -1064,7 +1126,7 @@ function SummaryPill({
 }) {
   return (
     <span
-      className={`rounded border px-2.5 py-1 ${getSummaryPillClassName(tone)}`}
+      className={`rounded-md border px-2.5 py-1 ${getSummaryPillClassName(tone)}`}
     >
       <span className="font-medium">{value}</span> {label}
     </span>
@@ -1075,7 +1137,7 @@ function StatusBadge({ status }: { status: string }) {
   const state = getDocumentStatusState(status)
   return (
     <span
-      className={`rounded border px-2 py-0.5 font-medium ${state.className}`}
+      className={`rounded-md border px-2 py-0.5 font-medium ${state.className}`}
     >
       {state.label}
     </span>
@@ -1104,7 +1166,7 @@ function DocumentCard({
   onRetry: (id: string) => void
 }) {
   return (
-    <div className="rounded border bg-card px-3 py-3">
+    <div className="rounded-lg border border-border bg-card px-3 py-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex min-w-0 flex-col gap-1">
@@ -1125,7 +1187,7 @@ function DocumentCard({
             {getStatusHelpText(doc)}
           </p>
           {doc.status === "error" && (
-            <div className="rounded border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               {doc.errorMessage ||
                 "Processing failed. Retry this document or delete it and upload a new copy."}
             </div>
@@ -1137,7 +1199,7 @@ function DocumentCard({
               type="button"
               onClick={() => onRetry(doc._id)}
               disabled={retryingDocIds.has(doc._id)}
-              className="rounded border border-destructive/30 px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md border border-destructive/30 px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {retryingDocIds.has(doc._id) ? "Retrying..." : "Retry"}
             </button>
@@ -1146,14 +1208,14 @@ function DocumentCard({
             type="button"
             onClick={() => onConfirmDelete(doc._id)}
             disabled={deletingDocIds.has(doc._id)}
-            className="text-xs text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Delete
           </button>
         </div>
       </div>
       {confirmingDocId === doc._id && (
-        <div className="mt-3 rounded border border-destructive/30 bg-destructive/5 p-3">
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-xs font-medium text-destructive">
             Delete this document?
           </p>
@@ -1166,7 +1228,7 @@ function DocumentCard({
               type="button"
               onClick={onCancelDelete}
               disabled={deletingDocIds.has(doc._id)}
-              className="rounded border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               Cancel
             </button>
@@ -1174,7 +1236,7 @@ function DocumentCard({
               type="button"
               onClick={() => onDelete(doc._id)}
               disabled={deletingDocIds.has(doc._id)}
-              className="rounded border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {deletingDocIds.has(doc._id) ? "Deleting..." : "Delete document"}
             </button>

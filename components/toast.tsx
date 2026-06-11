@@ -46,19 +46,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random()}`
 
-      setToasts((current) => [
-        ...current,
-        { id, title, description, variant },
-      ])
+      setToasts((current) => [...current, { id, title, description, variant }])
 
       window.setTimeout(() => dismissToast(id), TOAST_TIMEOUT_MS)
     },
-    [dismissToast],
+    [dismissToast]
   )
 
   const value = useMemo(
     () => ({ showToast, dismissToast }),
-    [showToast, dismissToast],
+    [showToast, dismissToast]
   )
 
   return (
@@ -72,12 +69,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`rounded border bg-background px-4 py-3 text-sm shadow-lg ${
+            className={`rounded-lg border bg-card px-4 py-3 text-sm shadow-lg shadow-black/5 ${
               toast.variant === "error"
-                ? "border-destructive/40"
+                ? "border-l-4 border-l-destructive"
                 : toast.variant === "success"
-                  ? "border-green-600/40"
-                  : "border-border"
+                  ? "border-l-4 border-l-emerald-600 dark:border-l-emerald-400"
+                  : "border-l-4 border-l-primary"
             }`}
           >
             <div className="flex gap-3">
@@ -100,7 +97,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => dismissToast(toast.id)}
-                className="h-5 shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                className="h-8 shrink-0 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 aria-label="Dismiss notification"
               >
                 Close

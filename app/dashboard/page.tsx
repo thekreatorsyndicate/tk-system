@@ -116,12 +116,12 @@ function CoachDashboard({
   }
 
   return (
-    <main className="flex flex-col gap-8">
-      <section className="border-b border-border/80 pb-8">
+    <main id="main-content" className="flex flex-col gap-8">
+      <section className="rounded-lg border border-border/80 bg-card/70 p-5 shadow-sm shadow-black/5 sm:p-6">
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="mb-3 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="mb-4 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" aria-hidden="true" />
           Main workspace
@@ -132,7 +132,7 @@ function CoachDashboard({
               <Gauge className="size-4 text-primary" aria-hidden="true" />
               Coach Dashboard
             </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+            <h1 className="text-4xl leading-tight font-semibold tracking-tight text-balance sm:text-5xl">
               Manage course knowledge bases.
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
@@ -143,7 +143,7 @@ function CoachDashboard({
           <button
             type="button"
             onClick={onPreviewAsStudent}
-            className="inline-flex w-fit items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-px"
           >
             <ChatCircleText className="size-4" aria-hidden="true" />
             Preview as Student
@@ -151,8 +151,8 @@ function CoachDashboard({
         </div>
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(20rem,0.75fr)_minmax(0,1.25fr)]">
-        <section className="rounded-md border border-border bg-muted/35 p-5 shadow-sm shadow-black/5">
+      <div className="grid gap-5 lg:grid-cols-[minmax(20rem,0.72fr)_minmax(0,1.28fr)]">
+        <section className="rounded-lg border border-border bg-muted/35 p-5 shadow-sm shadow-black/5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Plus className="size-4 text-primary" aria-hidden="true" />
             New KB
@@ -167,33 +167,40 @@ function CoachDashboard({
 
           <div className="my-5 h-px bg-border/80" />
 
-          <form onSubmit={handleCreate} className="flex flex-col gap-3">
-            <label className="sr-only" htmlFor="kb-title">
-              Course title
-            </label>
-            <input
-              id="kb-title"
-              className="rounded-md border border-border bg-background px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary"
-              placeholder="Course title..."
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={creating}
-            />
-            <label className="sr-only" htmlFor="kb-description">
-              Description
-            </label>
-            <input
-              id="kb-description"
-              className="rounded-md border border-border bg-background px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary"
-              placeholder="Description (optional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={creating}
-            />
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="grid gap-2">
+              <label className="text-sm font-medium" htmlFor="kb-title">
+                Course title
+              </label>
+              <input
+                id="kb-title"
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-ring/20"
+                placeholder="Respiration basics"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                disabled={creating}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium" htmlFor="kb-description">
+                Description
+              </label>
+              <input
+                id="kb-description"
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-ring/20"
+                placeholder="Optional context for students"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={creating}
+              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                You can refine modules, documents, and access after creation.
+              </p>
+            </div>
             <button
               type="submit"
               disabled={creating || !title.trim()}
-              className="mt-1 inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="size-4" aria-hidden="true" />
               {creating ? "Creating..." : "Create"}
@@ -201,7 +208,7 @@ function CoachDashboard({
           </form>
         </section>
 
-        <section className="rounded-md border border-border bg-card shadow-sm shadow-black/5">
+        <section className="rounded-lg border border-border bg-card shadow-sm shadow-black/5">
           <div className="flex flex-col gap-3 border-b border-border px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold">
@@ -216,7 +223,7 @@ function CoachDashboard({
                 manage student access.
               </p>
             </div>
-            <span className="w-fit rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            <span className="w-fit rounded-md border border-border/70 bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
               {kbs === undefined
                 ? "Loading"
                 : `${kbs.length} ${kbs.length === 1 ? "KB" : "KBs"}`}
@@ -229,12 +236,12 @@ function CoachDashboard({
                 {Array.from({ length: 4 }).map((_, index) => (
                   <div
                     key={index}
-                    className="h-32 animate-pulse rounded-md border border-border bg-muted/45"
+                    className="h-36 animate-pulse rounded-lg border border-border bg-muted/45"
                   />
                 ))}
               </div>
             ) : kbs.length === 0 ? (
-              <div className="flex min-h-48 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-6 text-center">
+              <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
                 <Books
                   className="size-7 text-muted-foreground"
                   aria-hidden="true"
@@ -254,7 +261,7 @@ function CoachDashboard({
                     key={kb._id}
                     type="button"
                     onClick={() => router.push(`/dashboard/kb/${kb._id}`)}
-                    className="group flex min-h-36 flex-col justify-between rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary/45 hover:bg-muted/45"
+                    className="group flex min-h-36 flex-col justify-between rounded-lg border border-border bg-background p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/35 hover:shadow-sm hover:shadow-black/5"
                   >
                     <span>
                       <span className="text-sm leading-5 font-semibold">
@@ -267,10 +274,10 @@ function CoachDashboard({
                       )}
                     </span>
                     <span className="mt-5 flex items-center justify-between gap-3">
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                      <span className="rounded-md border border-border/70 bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
                         {kb.isPublished ? "Published" : "Draft"}
                       </span>
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
                         Open
                         <ArrowRight
                           className="size-3.5 transition-transform group-hover:translate-x-0.5"
@@ -298,12 +305,12 @@ function StudentPreview({
 }) {
   const router = useRouter()
   return (
-    <main className="flex flex-col gap-8">
-      <section className="border-b border-border/80 pb-8">
+    <main id="main-content" className="flex flex-col gap-8">
+      <section className="rounded-lg border border-border/80 bg-card/70 p-5 shadow-sm shadow-black/5 sm:p-6">
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="mb-3 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="mb-4 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" aria-hidden="true" />
           Main workspace
@@ -317,7 +324,7 @@ function StudentPreview({
               />
               Student preview
             </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+            <h1 className="text-4xl leading-tight font-semibold tracking-tight text-balance sm:text-5xl">
               Published course chats.
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
@@ -328,7 +335,7 @@ function StudentPreview({
           <button
             type="button"
             onClick={onExit}
-            className="inline-flex w-fit items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-px"
           >
             <Books className="size-4" aria-hidden="true" />
             Exit Preview
@@ -336,7 +343,7 @@ function StudentPreview({
         </div>
       </section>
 
-      <section className="rounded-md border border-border bg-card shadow-sm shadow-black/5">
+      <section className="rounded-lg border border-border bg-card shadow-sm shadow-black/5">
         <div className="flex flex-col gap-3 border-b border-border px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold">
@@ -353,7 +360,7 @@ function StudentPreview({
               Open a published course to check the student chat experience.
             </p>
           </div>
-          <span className="w-fit rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+          <span className="w-fit rounded-md border border-border/70 bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
             {publishedKBs === undefined
               ? "Loading"
               : `${publishedKBs.length} ${publishedKBs.length === 1 ? "course" : "courses"}`}
@@ -366,12 +373,12 @@ function StudentPreview({
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
                   key={index}
-                  className="h-32 animate-pulse rounded-md border border-border bg-muted/45"
+                  className="h-36 animate-pulse rounded-lg border border-border bg-muted/45"
                 />
               ))}
             </div>
           ) : publishedKBs.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/30 p-6 text-center">
+            <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
               <ChatCircleText
                 className="size-7 text-muted-foreground"
                 aria-hidden="true"
@@ -390,7 +397,7 @@ function StudentPreview({
                   key={kb._id}
                   type="button"
                   onClick={() => router.push(`/kb/${kb._id}`)}
-                  className="group flex min-h-36 flex-col justify-between rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary/45 hover:bg-muted/45"
+                  className="group flex min-h-36 flex-col justify-between rounded-lg border border-border bg-background p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/35 hover:shadow-sm hover:shadow-black/5"
                 >
                   <span>
                     <span className="text-sm leading-5 font-semibold">
@@ -402,7 +409,7 @@ function StudentPreview({
                       </span>
                     )}
                   </span>
-                  <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+                  <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
                     Open chat
                     <ArrowRight
                       className="size-3.5 transition-transform group-hover:translate-x-0.5"

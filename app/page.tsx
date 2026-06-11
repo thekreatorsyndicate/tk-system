@@ -33,29 +33,48 @@ export default function HomePage() {
   const isLoadingCourses = publishedKBs === undefined || ownedKBs === undefined
 
   return (
-    <main className="min-h-[calc(100svh-4rem)] bg-background px-4 pt-4 pb-12 sm:px-6 lg:px-8">
+    <main
+      id="main-content"
+      className="min-h-[calc(100svh-4rem)] bg-background px-4 pt-6 pb-12 sm:px-6 lg:px-8"
+    >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
-        <section className="border-b border-border/80 pb-8">
-          <div className="max-w-2xl">
-            <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">
-              <Gauge className="size-3.5" aria-hidden="true" />
-              Main workspace
-            </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground sm:text-4xl">
-              Learn from courses or manage the knowledge base.
-            </h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-              Enrolled courses and your own published courses stay separate, so
-              it is clear whether you are learning from material shared by a
-              coach or testing a course you manage.
-            </p>
+        <section className="rounded-lg border border-border/80 bg-card/70 p-5 shadow-sm shadow-black/5 sm:p-6">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
+            <div className="max-w-3xl">
+              <p className="mb-4 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">
+                <Gauge className="size-3.5" aria-hidden="true" />
+                Main workspace
+              </p>
+              <h1 className="max-w-3xl text-4xl leading-tight font-semibold tracking-tight text-balance text-foreground sm:text-5xl">
+                Learn from courses or manage the knowledge base.
+              </h1>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+                Enrolled courses and your own published courses stay separate,
+                so it is clear whether you are learning from material shared by
+                a coach or testing a course you manage.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 lg:grid-cols-1">
+              <WorkspaceStat
+                label="Available"
+                value={isLoadingCourses ? "..." : accessibleCourses.length}
+              />
+              <WorkspaceStat
+                label="Enrolled"
+                value={isLoadingCourses ? "..." : enrolledCourses.length}
+              />
+              <WorkspaceStat
+                label="Owned"
+                value={ownedKBs === undefined ? "..." : ownedCourses.length}
+              />
+            </div>
           </div>
         </section>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
           <section
             id="course-chat"
-            className="rounded-md border border-border bg-card shadow-sm shadow-black/5"
+            className="rounded-lg border border-border bg-card shadow-sm shadow-black/5"
           >
             <div className="flex flex-col gap-3 border-b border-border px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -74,7 +93,7 @@ export default function HomePage() {
                   each course.
                 </p>
               </div>
-              <span className="w-fit rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+              <span className="w-fit rounded-md border border-border/70 bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
                 {isLoadingCourses
                   ? "Loading"
                   : `${accessibleCourses.length} available ${accessibleCourses.length === 1 ? "course" : "courses"}`}
@@ -87,7 +106,7 @@ export default function HomePage() {
                   {Array.from({ length: 4 }).map((_, index) => (
                     <div
                       key={index}
-                      className="h-32 animate-pulse rounded-md border border-border bg-muted/45"
+                      className="h-36 animate-pulse rounded-lg border border-border bg-muted/45"
                     />
                   ))}
                 </div>
@@ -112,13 +131,13 @@ export default function HomePage() {
             </div>
           </section>
 
-          <section className="rounded-md border border-border bg-muted/35 p-5 shadow-sm shadow-black/5">
+          <section className="rounded-lg border border-border bg-muted/35 p-5 shadow-sm shadow-black/5">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Books className="size-4 text-primary" aria-hidden="true" />
                 KB Dashboard
               </div>
-              <span className="shrink-0 rounded-full bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+              <span className="shrink-0 rounded-md border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground">
                 {ownedKBs === undefined
                   ? "Loading"
                   : `${ownedCourses.length} ${ownedCourses.length === 1 ? "KB" : "KBs"}`}
@@ -146,6 +165,23 @@ export default function HomePage() {
         </div>
       </div>
     </main>
+  )
+}
+
+function WorkspaceStat({
+  label,
+  value,
+}: {
+  label: string
+  value: number | string
+}) {
+  return (
+    <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2">
+      <p className="font-mono text-lg leading-none font-semibold tabular-nums">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">{label}</p>
+    </div>
   )
 }
 
@@ -183,7 +219,7 @@ function CourseGroup({
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed border-border bg-muted/20 p-4">
+        <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4">
           <p className="text-sm font-medium">{emptyTitle}</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {emptyDescription}
@@ -198,7 +234,7 @@ function CourseChatCard({ kb }: { kb: KnowledgeBaseSummary }) {
   return (
     <Link
       href={`/kb/${kb._id}`}
-      className="group flex min-h-36 flex-col justify-between rounded-md border border-border bg-background p-4 transition-colors hover:border-primary/45 hover:bg-muted/45"
+      className="group flex min-h-36 flex-col justify-between rounded-lg border border-border bg-background p-4 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/35 hover:shadow-sm hover:shadow-black/5"
     >
       <span>
         <span className="text-sm leading-5 font-semibold">{kb.title}</span>
@@ -208,7 +244,7 @@ function CourseChatCard({ kb }: { kb: KnowledgeBaseSummary }) {
           </span>
         )}
       </span>
-      <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+      <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
         Open chat
         <ArrowRight
           className="size-3.5 transition-transform group-hover:translate-x-0.5"
@@ -235,12 +271,12 @@ function KnowledgeBaseList({
           {Array.from({ length: 3 }).map((_, index) => (
             <div
               key={index}
-              className="h-14 animate-pulse rounded-md border border-border/70 bg-background/40"
+              className="h-14 animate-pulse rounded-lg border border-border/70 bg-background/40"
             />
           ))}
         </div>
       ) : !isSignedIn ? (
-        <p className="rounded-md border border-dashed border-border bg-background/40 p-4 text-sm leading-6 text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border bg-background/40 p-4 text-sm leading-6 text-muted-foreground">
           Sign in to see the knowledge bases you manage.
         </p>
       ) : knowledgeBases.length > 0 ? (
@@ -267,7 +303,7 @@ function KnowledgeBaseList({
           ))}
         </div>
       ) : (
-        <p className="rounded-md border border-dashed border-border bg-background/40 p-4 text-sm leading-6 text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border bg-background/40 p-4 text-sm leading-6 text-muted-foreground">
           No knowledge bases yet. Create your first course from the dashboard.
         </p>
       )}
@@ -277,7 +313,7 @@ function KnowledgeBaseList({
 
 function DashboardAction({ isSignedIn }: { isSignedIn: boolean }) {
   const className =
-    "group inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+    "group inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 active:translate-y-px"
 
   if (isSignedIn) {
     return (
