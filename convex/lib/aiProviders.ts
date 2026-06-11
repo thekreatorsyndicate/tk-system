@@ -7,6 +7,9 @@ export const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 export const OPENAI_CHAT_MODEL = "gpt-4o-mini"
 export const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 export const GEMINI_CHAT_MODEL = "gemini-2.5-flash"
+export const DEFAULT_CHAT_MAX_OUTPUT_TOKENS = 1024
+export const TUTOR_CHAT_MAX_OUTPUT_TOKENS = 4096
+export const TUTOR_CHAT_MAX_CONTINUATIONS = 2
 
 type ResolveProviderArgs = {
   requestedProvider?: string
@@ -18,6 +21,12 @@ type ResolveProviderArgs = {
 type ChatMessage = {
   role: "system" | "user" | "assistant"
   content: string
+}
+
+type ChatReplyOptions = {
+  maxOutputTokens?: number
+  continueOnLength?: boolean
+  maxContinuations?: number
 }
 
 export function resolveAiProvider(args: ResolveProviderArgs): AiProvider {
@@ -84,12 +93,21 @@ export async function generateChatReply(args: {
   provider: AiProvider
   openAiApiKey?: string
   geminiApiKey?: string
+  options?: ChatReplyOptions
 }): Promise<string> {
   if (args.provider === "gemini") {
-    return await generateGeminiChatReply(args.messages, args.geminiApiKey)
+    return await generateGeminiChatReply(
+      args.messages,
+      args.geminiApiKey,
+      args.options
+    )
   }
 
-  return await generateOpenAiChatReply(args.messages, args.openAiApiKey)
+  return await generateOpenAiChatReply(
+    args.messages,
+    args.openAiApiKey,
+    args.options
+  )
 }
 
 async function generateOpenAiEmbedding(
@@ -156,79 +174,154 @@ async function generateGeminiEmbedding(
 
 async function generateOpenAiChatReply(
   messages: ChatMessage[],
-  apiKey: string | undefined
+  apiKey: string | undefined,
+  options: ChatReplyOptions | undefined
 ): Promise<string> {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured")
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: OPENAI_CHAT_MODEL,
-      messages,
-      temperature: 0.3,
-      max_tokens: 1024,
-    }),
-  })
+  const maxOutputTokens =
+    options?.maxOutputTokens ?? DEFAULT_CHAT_MAX_OUTPUT_TOKENS
+  const maxContinuations = options?.continueOnLength
+    ? (options.maxContinuations ?? 0)
+    : 0
+  const replies: string[] = []
+  let requestMessages = messages
+  let finishReason: string | undefined
 
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`OpenAI chat failed: ${err}`)
+  for (let attempt = 0; attempt <= maxContinuations; attempt++) {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_CHAT_MODEL,
+        messages: requestMessages,
+        temperature: 0.3,
+        max_tokens: maxOutputTokens,
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`OpenAI chat failed: ${err}`)
+    }
+
+    const data = await res.json()
+    const choice = data.choices?.[0]
+    const content = choice?.message?.content
+    finishReason = choice?.finish_reason
+
+    if (typeof content !== "string" || content.trim().length === 0) {
+      throw new Error("OpenAI chat returned an empty response")
+    }
+
+    replies.push(content)
+    if (finishReason !== "length") return joinContinuedReplies(replies)
+
+    requestMessages = buildContinuationMessages(messages, replies)
   }
 
-  const data = await res.json()
-  return data.choices[0].message.content
+  throw new Error(
+    `OpenAI chat hit the output token limit before completing after ${
+      maxContinuations + 1
+    } attempt${maxContinuations === 0 ? "" : "s"}`
+  )
 }
 
 async function generateGeminiChatReply(
   messages: ChatMessage[],
-  apiKey: string | undefined
+  apiKey: string | undefined,
+  options: ChatReplyOptions | undefined
 ): Promise<string> {
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured")
 
-  const systemInstruction = messages.find(
-    (message) => message.role === "system"
-  )
-  const contents = messages
-    .filter((message) => message.role !== "system")
-    .map((message) => ({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }],
-    }))
+  const maxOutputTokens =
+    options?.maxOutputTokens ?? DEFAULT_CHAT_MAX_OUTPUT_TOKENS
+  const maxContinuations = options?.continueOnLength
+    ? (options.maxContinuations ?? 0)
+    : 0
+  const replies: string[] = []
+  let requestMessages = messages
+  let finishReason: string | undefined
 
-  const key = encodeURIComponent(apiKey)
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_CHAT_MODEL}:generateContent?key=${key}`
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: systemInstruction
-        ? { parts: [{ text: systemInstruction.content }] }
-        : undefined,
-      contents,
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 1024,
-      },
-    }),
-  })
+  for (let attempt = 0; attempt <= maxContinuations; attempt++) {
+    const systemInstruction = requestMessages.find(
+      (message) => message.role === "system"
+    )
+    const contents = requestMessages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.content }],
+      }))
 
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Gemini chat failed: ${err}`)
+    const key = encodeURIComponent(apiKey)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_CHAT_MODEL}:generateContent?key=${key}`
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: systemInstruction
+          ? { parts: [{ text: systemInstruction.content }] }
+          : undefined,
+        contents,
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens,
+        },
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Gemini chat failed: ${err}`)
+    }
+
+    const data = await res.json()
+    const candidate = data.candidates?.[0]
+    const parts = candidate?.content?.parts ?? []
+    const text = parts
+      .map((part: { text?: string }) => part.text ?? "")
+      .join("")
+      .trim()
+    if (!text) throw new Error("Gemini chat returned an empty response")
+
+    replies.push(text)
+    finishReason = candidate?.finishReason
+    if (finishReason !== "MAX_TOKENS") return joinContinuedReplies(replies)
+
+    requestMessages = buildContinuationMessages(messages, replies)
   }
 
-  const data = await res.json()
-  const parts = data.candidates?.[0]?.content?.parts ?? []
-  const text = parts
-    .map((part: { text?: string }) => part.text ?? "")
-    .join("")
-    .trim()
-  if (!text) throw new Error("Gemini chat returned an empty response")
-  return text
+  throw new Error(
+    `Gemini chat hit the output token limit before completing after ${
+      maxContinuations + 1
+    } attempt${maxContinuations === 0 ? "" : "s"}`
+  )
+}
+
+function buildContinuationMessages(
+  originalMessages: ChatMessage[],
+  replies: string[]
+): ChatMessage[] {
+  return [
+    ...originalMessages,
+    { role: "assistant", content: joinContinuedReplies(replies) },
+    {
+      role: "user",
+      content:
+        "Continue exactly where you left off. Do not repeat earlier text.",
+    },
+  ]
+}
+
+function joinContinuedReplies(replies: string[]): string {
+  return replies
+    .map((reply) => reply.trim())
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function tokenizeForEmbedding(text: string): string[] {

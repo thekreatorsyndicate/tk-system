@@ -12,6 +12,8 @@ import {
   MOCK_EMBEDDING_MODEL,
   OPENAI_EMBEDDING_MODEL,
   resolveAiProvider,
+  TUTOR_CHAT_MAX_CONTINUATIONS,
+  TUTOR_CHAT_MAX_OUTPUT_TOKENS,
 } from "./lib/aiProviders"
 import {
   getAccessibleKnowledgeBase,
@@ -1384,6 +1386,11 @@ export const sendMessage = action({
           messages: [...chatMessages.slice(0, -1), contextMessage],
           openAiApiKey,
           geminiApiKey,
+          options: {
+            maxOutputTokens: TUTOR_CHAT_MAX_OUTPUT_TOKENS,
+            continueOnLength: true,
+            maxContinuations: TUTOR_CHAT_MAX_CONTINUATIONS,
+          },
         })
       } catch (error) {
         const message =
