@@ -211,6 +211,7 @@ export default function KBChatPage({
 
     const messageText = input.trim()
     setChatError(null)
+    setInput("")
     setSending(true)
     try {
       let convId = conversationId
@@ -224,9 +225,9 @@ export default function KBChatPage({
       }
 
       await sendMsg({ conversationId: convId as any, content: messageText })
-      setInput("")
     } catch (error) {
       console.error("Chat send failed:", error)
+      setInput(messageText)
       const message = getErrorMessage(error)
       setChatError(message)
       showToast({
