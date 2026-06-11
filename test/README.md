@@ -1,5 +1,18 @@
 # RAG Stress Test Upload Files
 
+Automated checks for the pure retrieval helpers live next to these fixtures and
+can be run with:
+
+```bash
+pnpm test
+```
+
+Those tests cover query parsing, lexical/fuzzy scoring, LLM JSON parsing,
+reranker result parsing, answerability thresholds, and prompt-injection-shaped
+content as data. The upload-and-chat flow below remains the manual end-to-end
+stress test because it depends on processed Convex documents and model
+generation.
+
 Create a knowledge base named `RAG Stress Test Course`, then create these modules
 and upload the matching files:
 

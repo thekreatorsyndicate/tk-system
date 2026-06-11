@@ -1,5 +1,6 @@
-import { Geist, Geist_Mono } from "next/font/google"
 import type { Metadata } from "next"
+import { GeistSans } from "geist/font/sans"
+import { GeistMono } from "geist/font/mono"
 
 import "./globals.css"
 import { Providers } from "@/components/providers"
@@ -10,16 +11,6 @@ import {
   SignUpButton,
   UserButton,
 } from "@clerk/nextjs"
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-})
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-})
 
 export const metadata: Metadata = {
   title: "AI Tutor Platform",
@@ -34,7 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}
       >
         <ClerkProvider>
           <Providers>
@@ -58,5 +49,3 @@ export default function RootLayout({
     </html>
   )
 }
-
-

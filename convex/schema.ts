@@ -8,7 +8,9 @@ export default defineSchema({
     tokenIdentifier: v.string(),
     imageUrl: v.optional(v.string()),
     role: v.union(v.literal("coach"), v.literal("student")),
-  }).index("by_tokenIdentifier", ["tokenIdentifier"]),
+  })
+    .index("by_tokenIdentifier", ["tokenIdentifier"])
+    .index("by_email", ["email"]),
 
   knowledgeBases: defineTable({
     title: v.string(),
@@ -18,6 +20,19 @@ export default defineSchema({
   })
     .index("by_coachId", ["coachId"])
     .index("by_published", ["isPublished"]),
+
+  enrollments: defineTable({
+    profileId: v.id("profiles"),
+    knowledgeBaseId: v.id("knowledgeBases"),
+    enrolledByProfileId: v.id("profiles"),
+    createdAt: v.number(),
+  })
+    .index("by_profileId", ["profileId"])
+    .index("by_knowledgeBaseId", ["knowledgeBaseId"])
+    .index("by_profileId_and_knowledgeBaseId", [
+      "profileId",
+      "knowledgeBaseId",
+    ]),
 
   modules: defineTable({
     knowledgeBaseId: v.id("knowledgeBases"),

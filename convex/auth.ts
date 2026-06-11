@@ -1,6 +1,10 @@
 import { v } from "convex/values"
 import { mutation, query } from "./_generated/server"
 
+function normalizeEmail(email: string | undefined) {
+  return email?.trim().toLowerCase() ?? ""
+}
+
 export const getMe = query({
   args: {},
   handler: async (ctx) => {
@@ -37,7 +41,7 @@ export const getOrCreateProfile = mutation({
 
     const profileId = await ctx.db.insert("profiles", {
       name: args.name ?? identity.name ?? identity.email ?? "Unknown",
-      email: args.email ?? identity.email ?? "",
+      email: normalizeEmail(args.email ?? identity.email),
       tokenIdentifier: identity.tokenIdentifier,
       imageUrl: args.imageUrl ?? identity.pictureUrl,
       role: args.role ?? "student",

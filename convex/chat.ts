@@ -19,6 +19,7 @@ import {
 } from "./lib/authz"
 import {
   fuzzyTermScore,
+  isRetrievalAnswerable,
   lexicalTermScore,
   parseExpandedSearchQuery,
   parseRerankedSearchResults,
@@ -117,7 +118,7 @@ const MOCK_SIMILARITY_THRESHOLD = 0.2
 const SEARCH_CANDIDATE_LIMIT = 32
 const VECTOR_CANDIDATE_LIMIT = 48
 const RERANK_CANDIDATE_LIMIT = 20
-const MIN_ANSWERABLE_SCORE = 0.5
+const MAX_FALLBACK_SOURCE_CARDS = 3
 
 function buildSystemPrompt(kbTitle: string): string {
   return `You are an AI tutor for the course "${kbTitle}".
@@ -321,11 +322,30 @@ function getSupportLabel(contextChunk: ContextChunk): string {
 
 function extractCitedSourceNumbers(reply: string): Set<number> {
   const cited = new Set<number>()
-  const citationMatches = reply.matchAll(/\[([\d,\s]+)\]/g)
+  const citationMatches = reply.matchAll(/\[([\d,\s-]+)\]/g)
 
   for (const match of citationMatches) {
     for (const value of match[1].split(",")) {
-      const sourceNumber = Number(value.trim())
+      const trimmed = value.trim()
+      const range = trimmed.match(/^(\d+)\s*-\s*(\d+)$/)
+      if (range) {
+        const start = Number(range[1])
+        const end = Number(range[2])
+        if (
+          Number.isInteger(start) &&
+          Number.isInteger(end) &&
+          start > 0 &&
+          end >= start &&
+          end - start <= MAX_DIRECT_MATCHES
+        ) {
+          for (let sourceNumber = start; sourceNumber <= end; sourceNumber++) {
+            cited.add(sourceNumber)
+          }
+        }
+        continue
+      }
+
+      const sourceNumber = Number(trimmed)
       if (Number.isInteger(sourceNumber) && sourceNumber > 0) {
         cited.add(sourceNumber)
       }
@@ -335,11 +355,26 @@ function extractCitedSourceNumbers(reply: string): Set<number> {
   return cited
 }
 
+function isUnsupportedReply(reply: string): boolean {
+  const normalized = reply.toLowerCase().replace(/\s+/g, " ").trim()
+  return [
+    "i can only answer that if it appears in the course material",
+    "i could not find enough relevant material",
+    "can't access compatible course material",
+    "cannot access compatible course material",
+    "course material is not ready",
+    "not enough relevant material in this course",
+  ].some((marker) => normalized.includes(marker))
+}
+
 function buildSources(
   contextChunks: ContextChunk[],
   citedSourceNumbers: Set<number>
 ): ChatSource[] {
   const directModuleBySourceNumber = new Map<number, string>()
+  const validSourceNumbers = new Set(
+    contextChunks.map((contextChunk) => contextChunk.sourceNumber)
+  )
   for (const contextChunk of contextChunks) {
     if (contextChunk.sourceKind === "direct") {
       directModuleBySourceNumber.set(
@@ -349,17 +384,7 @@ function buildSources(
     }
   }
 
-  return contextChunks.flatMap((contextChunk) => {
-    if (!citedSourceNumbers.has(contextChunk.sourceNumber)) return []
-
-    if (
-      contextChunk.sourceKind === "adjacent" &&
-      directModuleBySourceNumber.get(contextChunk.sourceNumber) ===
-        getModuleLabel(contextChunk.chunk)
-    ) {
-      return []
-    }
-
+  function toSource(contextChunk: ContextChunk): ChatSource {
     return {
       sourceNumber: contextChunk.sourceNumber,
       chunkId: contextChunk.chunk._id,
@@ -373,7 +398,34 @@ function buildSources(
       supportReason: contextChunk.supportReason,
       sourceKind: contextChunk.sourceKind,
     }
-  })
+  }
+
+  function shouldIncludeSource(contextChunk: ContextChunk): boolean {
+    if (!citedSourceNumbers.has(contextChunk.sourceNumber)) return false
+
+    if (
+      contextChunk.sourceKind === "adjacent" &&
+      directModuleBySourceNumber.get(contextChunk.sourceNumber) ===
+        getModuleLabel(contextChunk.chunk)
+    ) {
+      return false
+    }
+
+    return true
+  }
+
+  const hasValidCitations = Array.from(citedSourceNumbers).some(
+    (sourceNumber) => validSourceNumbers.has(sourceNumber)
+  )
+  const citedSources = hasValidCitations
+    ? contextChunks.filter(shouldIncludeSource).map(toSource)
+    : []
+  if (citedSources.length > 0) return citedSources
+
+  return contextChunks
+    .filter((contextChunk) => contextChunk.sourceKind === "direct")
+    .slice(0, MAX_FALLBACK_SOURCE_CARDS)
+    .map(toSource)
 }
 
 function getRetrievalSearchQueries(
@@ -842,21 +894,6 @@ async function rerankTopChunks(args: {
   }
 }
 
-function isAnswerable(directMatches: RankedChunk[]): boolean {
-  if (directMatches.length === 0) return false
-  const usable = directMatches.filter(
-    (match) =>
-      match.supportKind === "direct" || match.supportKind === "indirect"
-  )
-  if (usable.length === 0) return false
-  return usable.some(
-    (match) =>
-      match.score >= MIN_ANSWERABLE_SCORE ||
-      match.vectorScore >= 0.5 ||
-      match.lexicalScore >= 0.8
-  )
-}
-
 // ── Public mutations ──
 
 export const createConversation = mutation({
@@ -1105,9 +1142,15 @@ export const sendMessage = action({
       id: conversation.knowledgeBaseId,
     })
     if (!kb) throw new Error("Knowledge base not found")
-    if (!kb.isPublished && kb.coachId !== profile._id) {
-      throw new Error("Not authorized")
-    }
+
+    const canAccess: boolean = await ctx.runQuery(
+      internal.chatInternal.canAccessKnowledgeBase,
+      {
+        profileId: profile._id,
+        knowledgeBaseId: conversation.knowledgeBaseId,
+      },
+    )
+    if (!canAccess) throw new Error("Not authorized")
 
     await ctx.runMutation(internal.chatInternal.insertMessage, {
       conversationId: args.conversationId,
@@ -1268,7 +1311,7 @@ export const sendMessage = action({
       return { content: refusal, sources: [] }
     }
 
-    if (!isAnswerable(directMatches)) {
+    if (!isRetrievalAnswerable(directMatches)) {
       const refusal =
         "I can only answer that if it appears in the course material. I could not find enough relevant material in this course to answer confidently."
 
@@ -1351,7 +1394,9 @@ export const sendMessage = action({
     }
 
     const citedSourceNumbers = extractCitedSourceNumbers(reply)
-    const sources = buildSources(contextChunks, citedSourceNumbers)
+    const sources = isUnsupportedReply(reply)
+      ? []
+      : buildSources(contextChunks, citedSourceNumbers)
 
     await ctx.runMutation(internal.chatInternal.insertMessage, {
       conversationId: args.conversationId,

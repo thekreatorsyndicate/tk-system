@@ -22,12 +22,21 @@ export type RetrievalConfidenceSummary = {
 
 export type SupportKind = "direct" | "indirect" | "background" | "irrelevant"
 
+export type AnswerabilityCandidate = {
+  score: number
+  vectorScore: number
+  lexicalScore: number
+  supportKind: SupportKind
+}
+
 export type RerankedSearchResult = {
   chunkId: string
   relevanceScore: number
   supportKind: SupportKind
   reason?: string
 }
+
+export const MIN_ANSWERABLE_SCORE = 0.5
 
 const STOP_WORDS = new Set([
   "the",
@@ -144,6 +153,23 @@ export function shouldExpandQuery(summary: RetrievalConfidenceSummary): boolean 
     summary.directMatchesCount === 0 ||
     summary.topScore < 0.58 ||
     (summary.topSemanticScore >= 0.35 && summary.topLexicalScore === 0)
+  )
+}
+
+export function isRetrievalAnswerable(
+  candidates: AnswerabilityCandidate[]
+): boolean {
+  if (candidates.length === 0) return false
+  const usable = candidates.filter(
+    (candidate) =>
+      candidate.supportKind === "direct" || candidate.supportKind === "indirect"
+  )
+  if (usable.length === 0) return false
+  return usable.some(
+    (candidate) =>
+      candidate.score >= MIN_ANSWERABLE_SCORE ||
+      candidate.vectorScore >= 0.5 ||
+      candidate.lexicalScore >= 0.8
   )
 }
 

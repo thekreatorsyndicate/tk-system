@@ -59,10 +59,19 @@ export async function getAccessibleKnowledgeBase(
 ): Promise<Doc<"knowledgeBases"> | null> {
   const knowledgeBase = await ctx.db.get(id)
   if (!knowledgeBase) return null
-  if (knowledgeBase.isPublished) return knowledgeBase
 
   const profile = await getCurrentProfile(ctx)
   if (profile && knowledgeBase.coachId === profile._id) return knowledgeBase
+  if (!profile || !knowledgeBase.isPublished) return null
+
+  const enrollment = await ctx.db
+    .query("enrollments")
+    .withIndex("by_profileId_and_knowledgeBaseId", (q) =>
+      q.eq("profileId", profile._id).eq("knowledgeBaseId", id),
+    )
+    .unique()
+
+  if (enrollment) return knowledgeBase
 
   return null
 }

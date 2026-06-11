@@ -6,9 +6,14 @@ import { useAction, useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { useAuth } from "@clerk/nextjs"
 import { useStableQuery } from "@/hooks/use-stable-query"
+import { useToast } from "@/components/toast"
+import { ChatCircleText, TreeStructure, X } from "@phosphor-icons/react"
+import { useRouter } from "next/navigation"
 import { use, useState, useRef, useEffect } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+
+type MobilePanel = "conversations" | "modules" | null
 
 export default function KBChatPage({
   params,
@@ -17,23 +22,47 @@ export default function KBChatPage({
 }) {
   const { id } = use(params)
   const { isLoaded, isSignedIn } = useAuth()
+  const { showToast } = useToast()
+  const router = useRouter()
+  const profile = useStableQuery(api.auth.getMe)
+  const hasProfile = profile !== undefined && profile !== null
   const kb = useStableQuery(api.knowledgeBases.get, { id: id as any })
   const moduleTree = useStableQuery(api.modules.getTree, {
     knowledgeBaseId: id as any,
   })
-  const conversations = useStableQuery(api.chat.listConversations, {
-    knowledgeBaseId: id as any,
-  })
+  const conversations = useStableQuery(
+    api.chat.listConversations,
+    hasProfile ? { knowledgeBaseId: id as any } : "skip"
+  )
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [pinnedModuleId, setPinnedModuleId] = useState<string | null>(null)
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
+  const [creatingConversation, setCreatingConversation] = useState(false)
+  const [creatingProfile, setCreatingProfile] = useState(false)
+  const [profileSetupError, setProfileSetupError] = useState<string | null>(
+    null
+  )
+  const [profileSetupAttempt, setProfileSetupAttempt] = useState(0)
+  const [chatError, setChatError] = useState<string | null>(null)
+  const [archivingConversationIds, setArchivingConversationIds] = useState<
+    Set<string>
+  >(() => new Set())
+  const [deletingConversationIds, setDeletingConversationIds] = useState<
+    Set<string>
+  >(() => new Set())
+  const [confirmingConversationId, setConfirmingConversationId] = useState<
+    string | null
+  >(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null)
   const [collapsedModuleIds, setCollapsedModuleIds] = useState<Set<string>>(
     () => new Set()
   )
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const createdProfileRef = useRef(false)
 
+  const getOrCreateProfile = useMutation(api.auth.getOrCreateProfile)
   const createConv = useMutation(api.chat.createConversation)
   const archiveConv = useMutation(api.chat.archiveConversation)
   const deleteConv = useMutation(api.chat.deleteConversation)
@@ -46,6 +75,52 @@ export default function KBChatPage({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  useEffect(() => {
+    if (!isLoaded || profile === undefined) return
+    if (!isSignedIn || profile !== null) {
+      createdProfileRef.current = false
+      return
+    }
+    if (createdProfileRef.current) return
+
+    let cancelled = false
+    createdProfileRef.current = true
+    setCreatingProfile(true)
+    setProfileSetupError(null)
+
+    getOrCreateProfile({ role: "student" })
+      .then((createdProfile) => {
+        if (!createdProfile)
+          throw new Error("Profile setup returned no profile")
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error("Profile creation failed:", error)
+        createdProfileRef.current = false
+        const message = getErrorMessage(error)
+        setProfileSetupError(message)
+        showToast({
+          title: "Profile setup failed",
+          description: "We could not create your profile. Please try again.",
+          variant: "error",
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setCreatingProfile(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    getOrCreateProfile,
+    isLoaded,
+    isSignedIn,
+    profile,
+    profileSetupAttempt,
+    showToast,
+  ])
 
   if (!isLoaded || kb === undefined || moduleTree === undefined) {
     return <div className="p-8 text-sm">Loading...</div>
@@ -63,47 +138,159 @@ export default function KBChatPage({
 
   if (!kb) return <div className="p-8 text-sm">Knowledge base not found</div>
 
-  const safeKb = kb
-  const safeConversations = conversations ?? []
-
-  async function handleNewConversation() {
-    const conv = await createConv({
-      knowledgeBaseId: safeKb._id,
-      ...(pinnedModuleId ? { pinnedModuleId: pinnedModuleId as any } : {}),
-    })
-    setConversationId(conv!._id)
+  if (profile === undefined || profile === null) {
+    return (
+      <div className="flex min-h-svh items-center justify-center p-8">
+        <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+          {profileSetupError ? (
+            <>
+              <p className="text-sm font-medium">Profile setup failed</p>
+              <p className="text-sm text-muted-foreground">
+                {profileSetupError}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  createdProfileRef.current = false
+                  setProfileSetupError(null)
+                  setProfileSetupAttempt((attempt) => attempt + 1)
+                }}
+                className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground"
+              >
+                Try Again
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {creatingProfile ? "Setting up your profile..." : "Loading..."}
+            </p>
+          )}
+        </div>
+      </div>
+    )
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault()
-    if (!input.trim() || sending) return
+  const safeKb = kb
+  const safeConversations = conversations ?? []
+  const chatDisabled = sending || !hasProfile
 
-    let convId = conversationId
-    if (!convId) {
+  async function handleNewConversation() {
+    if (!hasProfile || creatingConversation) return
+
+    setChatError(null)
+    setCreatingConversation(true)
+    try {
       const conv = await createConv({
         knowledgeBaseId: safeKb._id,
         ...(pinnedModuleId ? { pinnedModuleId: pinnedModuleId as any } : {}),
       })
-      convId = conv!._id
-      setConversationId(convId)
+      setConversationId(conv!._id)
+      setMobilePanel(null)
+    } catch (error) {
+      console.error("Conversation creation failed:", error)
+      const message = getErrorMessage(error)
+      setChatError(message)
+      showToast({
+        title: "Chat creation failed",
+        description: "We could not start a new chat. Please try again.",
+        variant: "error",
+      })
+    } finally {
+      setCreatingConversation(false)
     }
+  }
 
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault()
+    if (!input.trim() || chatDisabled) return
+
+    const messageText = input.trim()
+    setChatError(null)
     setSending(true)
     try {
-      await sendMsg({ conversationId: convId as any, content: input.trim() })
+      let convId = conversationId
+      if (!convId) {
+        const conv = await createConv({
+          knowledgeBaseId: safeKb._id,
+          ...(pinnedModuleId ? { pinnedModuleId: pinnedModuleId as any } : {}),
+        })
+        convId = conv!._id
+        setConversationId(convId)
+      }
+
+      await sendMsg({ conversationId: convId as any, content: messageText })
       setInput("")
+    } catch (error) {
+      console.error("Chat send failed:", error)
+      const message = getErrorMessage(error)
+      setChatError(message)
+      showToast({
+        title: "Message not sent",
+        description:
+          "Your message is still in the input. Please try sending it again.",
+        variant: "error",
+      })
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleArchiveConversation(id: string, isActive: boolean) {
+    if (archivingConversationIds.has(id)) return
+    setArchivingConversationIds((current) => new Set(current).add(id))
+    try {
+      await archiveConv({ id: id as any, isActive })
+      if (conversationId === id && !isActive) setConversationId(null)
+    } catch (error) {
+      console.error("Conversation archive update failed:", error)
+      showToast({
+        title: isActive ? "Unarchive failed" : "Archive failed",
+        description: "We could not update this conversation. Please try again.",
+        variant: "error",
+      })
+    } finally {
+      setArchivingConversationIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
+  async function handleDeleteConversation(id: string) {
+    if (deletingConversationIds.has(id)) return
+    setDeletingConversationIds((current) => new Set(current).add(id))
+    try {
+      await deleteConv({ id: id as any })
+      if (conversationId === id) setConversationId(null)
+      setConfirmingConversationId((current) =>
+        current === id ? null : current
+      )
+    } catch (error) {
+      console.error("Conversation deletion failed:", error)
+      showToast({
+        title: "Delete failed",
+        description: "We could not delete this conversation. Please try again.",
+        variant: "error",
+      })
+    } finally {
+      setDeletingConversationIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
     }
   }
 
   function handleSelectModule(moduleId: string | null) {
     setPinnedModuleId(moduleId)
     setConversationId(null)
+    setMobilePanel(null)
   }
 
   function handleSelectConversation(id: string) {
     setConversationId(id)
+    setMobilePanel(null)
   }
 
   const currentConv = safeConversations.find(
@@ -146,144 +333,112 @@ export default function KBChatPage({
     })
   }
 
+  const conversationsPanel = (
+    <ConversationsPanel
+      scopedConversations={scopedConversations}
+      activeConversations={activeConversations}
+      archivedConversations={archivedConversations}
+      conversationId={conversationId}
+      pinnedModuleId={pinnedModuleId}
+      showArchived={showArchived}
+      hasProfile={hasProfile}
+      creatingConversation={creatingConversation}
+      archivingConversationIds={archivingConversationIds}
+      deletingConversationIds={deletingConversationIds}
+      confirmingConversationId={confirmingConversationId}
+      onNewConversation={handleNewConversation}
+      onShowArchivedChange={setShowArchived}
+      onArchive={handleArchiveConversation}
+      onRequestDelete={setConfirmingConversationId}
+      onCancelDelete={() => setConfirmingConversationId(null)}
+      onConfirmDelete={handleDeleteConversation}
+      onSelect={handleSelectConversation}
+      onClose={() => setMobilePanel(null)}
+    />
+  )
+
+  const modulesPanel = (
+    <ModulesPanel
+      moduleTree={moduleTree}
+      pinnedModuleId={pinnedModuleId}
+      collapsedModuleIds={collapsedModuleIds}
+      onSelect={handleSelectModule}
+      onToggle={toggleModuleExpanded}
+      onClose={() => setMobilePanel(null)}
+    />
+  )
+
   return (
-    <div className="flex h-[calc(100svh-4rem)]">
-      <aside className="flex w-56 flex-col border-r">
-        <div className="flex items-center justify-between border-y px-3 py-2">
-          <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-            Conversations
-          </h2>
-          <button
-            onClick={handleNewConversation}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            + New
-          </button>
-        </div>
-        <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
-          {scopedConversations.length === 0 ? (
-            <p className="px-2 text-xs text-muted-foreground">
-              {pinnedModuleId
-                ? "No conversations in this module"
-                : "No conversations yet"}
-            </p>
-          ) : (
-            <>
-              <ConversationList
-                conversations={activeConversations}
-                conversationId={conversationId}
-                emptyLabel={
-                  pinnedModuleId
-                    ? "No active conversations in this module"
-                    : "No active conversations"
-                }
-                onArchive={(id) => {
-                  if (conversationId === id) setConversationId(null)
-                  archiveConv({ id: id as any, isActive: false })
-                }}
-                onDelete={(id) => {
-                  if (!confirm("Delete this conversation permanently?")) return
-                  if (conversationId === id) setConversationId(null)
-                  deleteConv({ id: id as any })
-                }}
-                onSelect={handleSelectConversation}
-              />
-              {showArchived && archivedConversations.length > 0 && (
-                <div className="mt-3 border-t pt-2">
-                  <p className="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
-                    Archived
+    <>
+    <div className="flex h-[calc(100svh-4rem)] min-w-0 flex-col overflow-hidden">
+      <div className="flex h-12 shrink-0 items-center border-y bg-background px-4">
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span aria-hidden="true">←</span>
+          Back to home
+        </button>
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <aside className="hidden w-60 shrink-0 flex-col border-r lg:flex">
+        {conversationsPanel}
+      </aside>
+
+      <aside className="hidden w-60 shrink-0 flex-col border-r lg:flex">
+        {modulesPanel}
+      </aside>
+
+      {mobilePanel && (
+        <MobileDrawer onClose={() => setMobilePanel(null)}>
+          {mobilePanel === "conversations" ? conversationsPanel : modulesPanel}
+        </MobileDrawer>
+      )}
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="border-b bg-background">
+          <div className="flex h-12 items-center justify-between gap-3 px-3 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="min-w-0">
+                <h1 className="truncate text-sm font-medium">{safeKb.title}</h1>
+                {pinnedModuleName && (
+                  <p className="truncate text-xs text-muted-foreground">
+                    Focused on: {pinnedModuleName}
                   </p>
-                  <ConversationList
-                    conversations={archivedConversations}
-                    conversationId={conversationId}
-                    emptyLabel="No archived conversations"
-                    onArchive={(id) =>
-                      archiveConv({ id: id as any, isActive: true })
-                    }
-                    onDelete={(id) => {
-                      if (!confirm("Delete this conversation permanently?"))
-                        return
-                      if (conversationId === id) setConversationId(null)
-                      deleteConv({ id: id as any })
-                    }}
-                    onSelect={handleSelectConversation}
-                    archived
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        {archivedConversations.length > 0 && (
-          <div className="border-t p-2">
-            <button
-              onClick={() => setShowArchived((value) => !value)}
-              className="w-full rounded px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              {showArchived
-                ? "Hide archived conversations"
-                : `Show archived conversations (${archivedConversations.length})`}
-            </button>
-          </div>
-        )}
-      </aside>
-
-      <aside className="flex w-56 flex-col overflow-y-auto border-r">
-        <div className="flex items-center justify-between border-y px-3 py-2">
-          <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-            Modules
-          </h2>
-        </div>
-        <div className="flex flex-col gap-0.5 p-2">
-          <button
-            onClick={() => handleSelectModule(null)}
-            className={`rounded px-2 py-1 text-left text-sm transition-colors ${
-              pinnedModuleId === null
-                ? "bg-muted font-medium"
-                : "hover:bg-muted"
-            }`}
-          >
-            All Modules
-          </button>
-          {moduleTree.length === 0 && (
-            <p className="px-2 text-xs text-muted-foreground">
-              No modules defined yet
-            </p>
-          )}
-          {moduleTree.map((mod: any) => (
-            <ModuleTreeItem
-              key={mod._id}
-              mod={mod}
-              activeModuleId={pinnedModuleId}
-              collapsedModuleIds={collapsedModuleIds}
-              onSelect={handleSelectModule}
-              onToggle={toggleModuleExpanded}
-            />
-          ))}
-        </div>
-      </aside>
-
-      <main className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-y px-6 py-3">
-          <div className="min-w-0">
-            <h1 className="truncate text-sm font-medium">{safeKb.title}</h1>
-            {pinnedModuleName && (
-              <p className="text-xs text-muted-foreground">
-                Focused on: {pinnedModuleName}
-              </p>
-            )}
-            {currentConv && !pinnedModuleName && (
-              <p className="text-xs text-muted-foreground">
-                {currentConv.title}
-              </p>
-            )}
+                )}
+                {currentConv && !pinnedModuleName && (
+                  <p className="truncate text-xs text-muted-foreground">
+                    {currentConv.title}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2 lg:hidden">
+              <button
+                type="button"
+                onClick={() => setMobilePanel("conversations")}
+                className="flex h-11 items-center gap-1.5 rounded border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <ChatCircleText size={16} aria-hidden />
+                Chats
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobilePanel("modules")}
+                className="flex h-11 items-center gap-1.5 rounded border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <TreeStructure size={16} aria-hidden />
+                Modules
+              </button>
+            </div>
           </div>
         </header>
 
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 sm:p-6">
           {!conversationId ? (
             <div className="flex flex-1 items-center justify-center">
-              <div className="flex flex-col items-center gap-3">
+              <div className="flex max-w-sm flex-col items-center gap-3 px-3">
                 <p className="text-center text-sm text-muted-foreground">
                   Ask a question about{" "}
                   <span className="font-medium text-foreground">
@@ -295,9 +450,10 @@ export default function KBChatPage({
                 </p>
                 <button
                   onClick={handleNewConversation}
-                  className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground"
+                  disabled={!hasProfile || creatingConversation}
+                  className="min-h-11 rounded bg-primary px-4 py-2 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Start New Chat
+                  {creatingConversation ? "Starting..." : "Start New Chat"}
                 </button>
               </div>
             </div>
@@ -319,25 +475,261 @@ export default function KBChatPage({
           <div ref={messagesEndRef} />
         </div>
 
-        <form onSubmit={handleSend} className="flex gap-2 border-t p-4">
+        {chatError && (
+          <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive sm:px-4">
+            {chatError}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleSend}
+          className="flex gap-2 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
+        >
           <input
-            className="flex-1 rounded border px-3 py-2 text-sm"
+            className="h-11 min-w-0 flex-1 rounded border px-3 text-sm"
             placeholder="Ask a question about the course material..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={sending}
+            disabled={chatDisabled}
           />
           <button
             type="submit"
-            disabled={!input.trim() || sending}
-            className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            disabled={!input.trim() || chatDisabled}
+            className="h-11 shrink-0 rounded bg-primary px-4 text-sm text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? "..." : "Send"}
           </button>
         </form>
       </main>
+      </div>
+    </div>
+    </>
+  )
+}
+
+function MobileDrawer({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <button
+        type="button"
+        aria-label="Close panel"
+        onClick={onClose}
+        className="absolute inset-0 bg-background/80"
+      />
+      <aside className="absolute inset-y-0 left-0 flex w-[min(22rem,calc(100vw-2rem))] max-w-full flex-col border-r bg-background shadow-lg">
+        {children}
+      </aside>
     </div>
   )
+}
+
+function PanelHeader({
+  title,
+  children,
+  onClose,
+}: {
+  title: string
+  children?: React.ReactNode
+  onClose?: () => void
+}) {
+  return (
+    <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
+      <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {title}
+      </h2>
+      <div className="flex items-center gap-1.5">
+        {children}
+        {onClose && (
+          <button
+            type="button"
+            aria-label="Close panel"
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ConversationsPanel({
+  scopedConversations,
+  activeConversations,
+  archivedConversations,
+  conversationId,
+  pinnedModuleId,
+  showArchived,
+  hasProfile,
+  creatingConversation,
+  archivingConversationIds,
+  deletingConversationIds,
+  confirmingConversationId,
+  onNewConversation,
+  onShowArchivedChange,
+  onArchive,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
+  onSelect,
+  onClose,
+}: {
+  scopedConversations: any[]
+  activeConversations: any[]
+  archivedConversations: any[]
+  conversationId: string | null
+  pinnedModuleId: string | null
+  showArchived: boolean
+  hasProfile: boolean
+  creatingConversation: boolean
+  archivingConversationIds: Set<string>
+  deletingConversationIds: Set<string>
+  confirmingConversationId: string | null
+  onNewConversation: () => void
+  onShowArchivedChange: (value: boolean | ((value: boolean) => boolean)) => void
+  onArchive: (id: string, isActive: boolean) => void
+  onRequestDelete: (id: string) => void
+  onCancelDelete: () => void
+  onConfirmDelete: (id: string) => void
+  onSelect: (id: string) => void
+  onClose: () => void
+}) {
+  return (
+    <>
+      <PanelHeader title="Conversations" onClose={onClose}>
+        <button
+          type="button"
+          onClick={onNewConversation}
+          disabled={!hasProfile || creatingConversation}
+          className="rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {creatingConversation ? "Starting..." : "+ New"}
+        </button>
+      </PanelHeader>
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        {scopedConversations.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {pinnedModuleId
+              ? "No conversations in this module"
+              : "No conversations yet"}
+          </p>
+        ) : (
+          <>
+            <ConversationList
+              conversations={activeConversations}
+              conversationId={conversationId}
+              emptyLabel={
+                pinnedModuleId
+                  ? "No active conversations in this module"
+                  : "No active conversations"
+              }
+              onArchive={(id) => onArchive(id, false)}
+              onRequestDelete={onRequestDelete}
+              onCancelDelete={onCancelDelete}
+              onConfirmDelete={onConfirmDelete}
+              onSelect={onSelect}
+              archivingIds={archivingConversationIds}
+              deletingIds={deletingConversationIds}
+              confirmingId={confirmingConversationId}
+            />
+            {showArchived && archivedConversations.length > 0 && (
+              <div className="mt-3 border-t pt-2">
+                <p className="px-2 pb-1 text-[10px] tracking-wider text-muted-foreground uppercase">
+                  Archived
+                </p>
+                <ConversationList
+                  conversations={archivedConversations}
+                  conversationId={conversationId}
+                  emptyLabel="No archived conversations"
+                  onArchive={(id) => onArchive(id, true)}
+                  onRequestDelete={onRequestDelete}
+                  onCancelDelete={onCancelDelete}
+                  onConfirmDelete={onConfirmDelete}
+                  onSelect={onSelect}
+                  archivingIds={archivingConversationIds}
+                  deletingIds={deletingConversationIds}
+                  confirmingId={confirmingConversationId}
+                  archived
+                />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {archivedConversations.length > 0 && (
+        <div className="border-t p-2">
+          <button
+            type="button"
+            onClick={() => onShowArchivedChange((value) => !value)}
+            className="min-h-11 w-full rounded px-2 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:min-h-0 lg:py-1.5"
+          >
+            {showArchived
+              ? "Hide archived conversations"
+              : `Show archived conversations (${archivedConversations.length})`}
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+function ModulesPanel({
+  moduleTree,
+  pinnedModuleId,
+  collapsedModuleIds,
+  onSelect,
+  onToggle,
+  onClose,
+}: {
+  moduleTree: any[]
+  pinnedModuleId: string | null
+  collapsedModuleIds: Set<string>
+  onSelect: (id: string | null) => void
+  onToggle: (id: string) => void
+  onClose: () => void
+}) {
+  return (
+    <>
+      <PanelHeader title="Modules" onClose={onClose} />
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className={`min-h-11 rounded px-2 py-2 text-left text-sm transition-colors lg:min-h-0 lg:py-1 ${
+            pinnedModuleId === null ? "bg-muted font-medium" : "hover:bg-muted"
+          }`}
+        >
+          All Modules
+        </button>
+        {moduleTree.length === 0 && (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            No modules defined yet
+          </p>
+        )}
+        {moduleTree.map((mod: any) => (
+          <ModuleTreeItem
+            key={mod._id}
+            mod={mod}
+            activeModuleId={pinnedModuleId}
+            collapsedModuleIds={collapsedModuleIds}
+            onSelect={onSelect}
+            onToggle={onToggle}
+          />
+        ))}
+      </div>
+    </>
+  )
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong"
 }
 
 function flattenModuleTree(modules: any[], depth = 0): any[] {
@@ -375,14 +767,15 @@ function ModuleTreeItem({
           type="button"
           onClick={() => hasChildren && onToggle(mod._id)}
           aria-label={isExpanded ? "Hide submodules" : "Show submodules"}
-          className="flex h-7 w-10 shrink-0 items-center justify-center text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30 lg:h-7 lg:w-10"
           disabled={!hasChildren}
         >
           {hasChildren ? (isExpanded ? "[-]" : "[+]") : ""}
         </button>
         <button
+          type="button"
           onClick={() => onSelect(mod._id)}
-          className="min-w-0 flex-1 truncate py-1 pr-2 text-left text-sm"
+          className="min-h-11 min-w-0 flex-1 truncate py-2 pr-2 text-left text-sm lg:min-h-0 lg:py-1"
         >
           {mod.name}
         </button>
@@ -436,7 +829,7 @@ function ChatMessage({ msg }: { msg: any }) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`min-w-0 text-sm leading-relaxed ${
+        className={`min-w-0 overflow-hidden text-sm leading-relaxed break-words ${
           isUser
             ? "max-w-[min(38rem,88%)] rounded-lg bg-primary px-4 py-2 text-primary-foreground"
             : "w-full max-w-[min(52rem,100%)] rounded-lg bg-muted px-4 py-3 text-foreground"
@@ -613,39 +1006,52 @@ function CourseSources({ sources }: { sources: any[] }) {
         Course Sources
       </p>
       <div className="flex flex-col gap-2">
-        {sources.map((source: any, index: number) => (
-          <div
-            key={source.chunkId}
-            className="rounded border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
-          >
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="font-medium text-foreground">
-                [{source.sourceNumber ?? index + 1}]
-              </span>
-              <span className="font-medium text-foreground">
-                {source.modulePath?.length > 0
-                  ? source.modulePath.join(" > ")
-                  : "Course-level material"}
-              </span>
-              {source.sourceKind === "adjacent" && (
-                <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] uppercase">
-                  supporting context
+        {sources.map((source: any, index: number) => {
+          const supportLabel = getSourceSupportLabel(source)
+          return (
+            <div
+              key={source.chunkId}
+              className="min-w-0 overflow-hidden rounded border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground"
+            >
+              <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium text-foreground">
+                  [{source.sourceNumber ?? index + 1}]
                 </span>
+                <span className="min-w-0 font-medium break-words text-foreground">
+                  {source.modulePath?.length > 0
+                    ? source.modulePath.join(" > ")
+                    : "Course-level material"}
+                </span>
+                <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] uppercase">
+                  {supportLabel}
+                </span>
+              </div>
+              {source.headingPath?.length > 0 && (
+                <p className="mb-1.5 text-[11px] text-muted-foreground">
+                  {source.headingPath.join(" > ")}
+                </p>
               )}
+              {source.supportReason && (
+                <p className="mb-1.5 text-[11px] text-muted-foreground">
+                  {source.supportReason}
+                </p>
+              )}
+              <div className="min-w-0 text-xs leading-relaxed">
+                <MarkdownContent content={source.content} variant="source" />
+              </div>
             </div>
-            {source.headingPath?.length > 0 && (
-              <p className="mb-1.5 text-[11px] text-muted-foreground">
-                {source.headingPath.join(" > ")}
-              </p>
-            )}
-            <div className="text-xs leading-relaxed">
-              <MarkdownContent content={source.content} variant="source" />
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
+}
+
+function getSourceSupportLabel(source: any) {
+  if (source.sourceKind === "adjacent") return "background context"
+  if (source.supportKind === "indirect") return "indirect support"
+  if (source.supportKind === "background") return "background context"
+  return "direct support"
 }
 
 function ConversationList({
@@ -653,71 +1059,124 @@ function ConversationList({
   conversationId,
   emptyLabel,
   onArchive,
-  onDelete,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
   onSelect,
+  archivingIds,
+  deletingIds,
+  confirmingId,
   archived = false,
 }: {
   conversations: any[]
   conversationId: string | null
   emptyLabel: string
   onArchive: (id: string) => void
-  onDelete: (id: string) => void
+  onRequestDelete: (id: string) => void
+  onCancelDelete: () => void
+  onConfirmDelete: (id: string) => void
   onSelect: (id: string) => void
+  archivingIds: Set<string>
+  deletingIds: Set<string>
+  confirmingId: string | null
   archived?: boolean
 }) {
   if (conversations.length === 0) {
-    return <p className="px-2 text-xs text-muted-foreground">{emptyLabel}</p>
+    return (
+      <p className="px-2 py-2 text-xs text-muted-foreground">{emptyLabel}</p>
+    )
   }
 
   return (
     <div className="flex flex-col gap-0.5">
-      {conversations.map((conv: any) => (
-        <div
-          key={conv._id}
-          className={`group rounded transition-colors ${
-            conversationId === conv._id ? "bg-muted" : "hover:bg-muted"
-          }`}
-        >
-          <button
-            onClick={() => onSelect(conv._id)}
-            className="flex w-full flex-col gap-0.5 px-2 py-1.5 text-left text-xs"
+      {conversations.map((conv: any) => {
+        const isArchiving = archivingIds.has(conv._id)
+        const isDeleting = deletingIds.has(conv._id)
+        const isBusy = isArchiving || isDeleting
+        const isConfirmingDelete = confirmingId === conv._id
+
+        return (
+          <div
+            key={conv._id}
+            className={`group rounded transition-colors ${
+              conversationId === conv._id ? "bg-muted" : "hover:bg-muted"
+            }`}
           >
-            <span className="truncate font-medium">{conv.title}</span>
-            {conv.modulePath?.length > 0 ? (
-              <span className="truncate text-[10px] text-muted-foreground">
-                {conv.modulePath.join(" > ")}
+            <button
+              type="button"
+              onClick={() => onSelect(conv._id)}
+              className="flex min-h-14 w-full flex-col justify-center gap-0.5 px-2 py-2 text-left text-xs lg:min-h-0 lg:py-1.5"
+            >
+              <span className="truncate font-medium">{conv.title}</span>
+              {conv.modulePath?.length > 0 ? (
+                <span className="truncate text-[10px] text-muted-foreground">
+                  {conv.modulePath.join(" > ")}
+                </span>
+              ) : (
+                <span className="truncate text-[10px] text-muted-foreground">
+                  All Modules
+                </span>
+              )}
+              <span className="text-[10px] text-muted-foreground">
+                {new Date(conv._creationTime).toLocaleDateString()}
               </span>
-            ) : (
-              <span className="truncate text-[10px] text-muted-foreground">
-                All Modules
-              </span>
+            </button>
+            <div className="flex gap-2 px-2 pb-1">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onArchive(conv._id)
+                }}
+                disabled={isBusy}
+                className="min-h-9 rounded pr-2 text-[10px] text-muted-foreground opacity-80 group-hover:opacity-100 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0"
+              >
+                {isArchiving ? "Saving..." : archived ? "Unarchive" : "Archive"}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRequestDelete(conv._id)
+                }}
+                disabled={isBusy}
+                className="min-h-9 rounded px-2 text-[10px] text-destructive opacity-80 group-hover:opacity-100 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0"
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+            {isConfirmingDelete && (
+              <div className="mx-2 mb-2 rounded border border-destructive/30 bg-destructive/5 p-2">
+                <p className="text-[11px] font-medium text-destructive">
+                  Delete this conversation?
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                  This permanently removes the chat and its messages. This
+                  cannot be undone.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onCancelDelete}
+                    disabled={isDeleting}
+                    className="min-h-9 rounded border px-2 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50 lg:min-h-0 lg:py-1"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onConfirmDelete(conv._id)}
+                    disabled={isDeleting}
+                    className="min-h-9 rounded border border-destructive/40 px-2 text-[10px] text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-0 lg:py-1"
+                  >
+                    {isDeleting ? "Deleting..." : "Delete conversation"}
+                  </button>
+                </div>
+              </div>
             )}
-            <span className="text-[10px] text-muted-foreground">
-              {new Date(conv._creationTime).toLocaleDateString()}
-            </span>
-          </button>
-          <div className="flex gap-2 px-2 pb-1">
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                onArchive(conv._id)
-              }}
-              className="text-[10px] text-muted-foreground opacity-70 group-hover:opacity-100 hover:text-foreground"
-            >
-              {archived ? "Unarchive" : "Archive"}
-            </button>
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                onDelete(conv._id)
-              }}
-              className="text-[10px] text-destructive opacity-70 group-hover:opacity-100 hover:text-destructive"
-            >
-              Delete
-            </button>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

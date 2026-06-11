@@ -29,6 +29,30 @@ export const getKB = internalQuery({
   },
 })
 
+export const canAccessKnowledgeBase = internalQuery({
+  args: {
+    profileId: v.id("profiles"),
+    knowledgeBaseId: v.id("knowledgeBases"),
+  },
+  handler: async (ctx, args) => {
+    const kb = await ctx.db.get(args.knowledgeBaseId)
+    if (!kb) return false
+    if (kb.coachId === args.profileId) return true
+    if (!kb.isPublished) return false
+
+    const enrollment = await ctx.db
+      .query("enrollments")
+      .withIndex("by_profileId_and_knowledgeBaseId", (q) =>
+        q
+          .eq("profileId", args.profileId)
+          .eq("knowledgeBaseId", args.knowledgeBaseId),
+      )
+      .unique()
+
+    return enrollment !== null
+  },
+})
+
 async function getModuleContext(
   ctx: QueryCtx,
   knowledgeBaseId: Id<"knowledgeBases">,
